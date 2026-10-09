@@ -1,0 +1,12 @@
+# Illustrative placeholders, NOT verified employer identifiers.
+# Keep disabled until a public employer board has been verified.
+sources:
+  - source: greenhouse
+    company: Example Greenhouse Employer
+    board_id: REPLACE_WITH_VERIFIED_GREENHOUSE_BOARD_ID
+    enabled: false
+  - source: lever
+    company: Example Lever Employer
+    board_id: REPLACE_WITH_VERIFIED_LEVER_BOARD_ID
+    region: global  # Use eu only for jobs.eu.lever.co boards.
+    enabled: false

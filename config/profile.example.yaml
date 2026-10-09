@@ -1,0 +1,55 @@
+# Sanitized template; null means unknown, not false or ineligible.
+# Loaded by job-scout match --profile; keep personal values in profile.yaml.
+education:
+  degree: bachelors
+  field: computer_and_data_engineering
+  expected_graduation_date: null
+  currently_enrolled: null
+eligibility:
+  work_authorized_countries: null
+  requires_sponsorship: null
+  willing_to_relocate: null
+preferences:
+  search_worldwide: true
+  preferred_regions: [Europe]
+  employment_types: [internship, graduate, entry_level]
+  primary_roles:
+    - quantitative developer
+    - C++ software engineer
+    - low-latency engineer
+    - systems engineer
+    - Linux/infrastructure engineer
+    - embedded/driver software engineer
+  secondary_roles:
+    - quantitative analyst
+    - machine learning engineer
+    - software engineer
+skills:
+  - C++
+  - Python
+  - Linux
+  - algorithms
+  - data structures
+  - SQL
+  - data analysis
+  - embedded systems
+  - CMake
+  - machine learning
+ranking_weights:
+  role_alignment: 0.35
+  skills_alignment: 0.25
+  education_experience_alignment: 0.20
+  compensation_career_potential: 0.10
+  location_preference: 0.10
+digest:
+  send_after: "08:00"  # Scheduled cloud runs only, interpreted in timezone below.
+  minimum_score: 60
+  timezone: Europe/Rome
+  maximum_matches: 50
+
+# Optional named overrides selected with --track systems.
+career_tracks:
+  systems:
+    primary_roles: [C++ software engineer, systems engineer, embedded/driver software engineer]
+    secondary_roles: [software engineer]
+    skills: [C++, Linux, CMake, embedded systems]

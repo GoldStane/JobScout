@@ -1,0 +1,63 @@
+name: Daily search
+
+'on':
+  schedule:
+    - cron: '17 8 * * *'
+      timezone: Europe/Rome
+    - cron: '47 10 * * *'
+      timezone: Europe/Rome
+    - cron: '17 17 * * *'
+      timezone: Europe/Rome
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'preview sends nothing; initialize is for a new database'
+        type: choice
+        required: true
+        default: preview
+        options:
+          - preview
+          - send
+          - initialize
+          - migrate
+          - status
+      retry_uncertain:
+        description: 'Send mode only: retry unconfirmed messages; duplicates are possible'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jobscout-production
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    # Manual runs also use only the default branch. Scheduling is opt-in after setup.
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (github.event_name == 'workflow_dispatch' || vars.JOBSCOUT_SCHEDULE_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install
+        run: python -m pip install -e '.[postgres]'
+      - name: Run JobScout with private configuration
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          JOBSCOUT_COMPANIES_YAML: ${{ secrets.JOBSCOUT_COMPANIES_YAML }}
+          JOBSCOUT_PROFILE_YAML: ${{ secrets.JOBSCOUT_PROFILE_YAML }}
+          JOBSCOUT_MODE: ${{ inputs.mode || 'send' }}
+          JOBSCOUT_RETRY_UNCERTAIN: ${{ inputs.retry_uncertain && 'true' || 'false' }}
+        run: python -m job_scout.cloud

@@ -1,0 +1,16 @@
+{
+  "jobs": [
+    {
+      "id": 12345,
+      "internal_job_id": 67890,
+      "requisition_id": "ENG-01",
+      "title": "Graduate C++ Engineer",
+      "updated_at": "2026-10-01T10:00:00+02:00",
+      "location": {"name": "Milan, Italy"},
+      "absolute_url": "https://example.org/careers?gh_jid=12345",
+      "content": "&amp;lt;p&amp;gt;Build C++ &amp;amp; Linux systems.&amp;lt;/p&amp;gt;&amp;lt;ul&amp;gt;&amp;lt;li&amp;gt;Graduate applicants welcome.&amp;lt;/li&amp;gt;&amp;lt;/ul&amp;gt;",
+      "metadata": null
+    }
+  ],
+  "meta": {"total": 1}
+}

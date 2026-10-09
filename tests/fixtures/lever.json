@@ -1,0 +1,14 @@
+[
+  {
+    "id": "example-posting-001",
+    "text": "Systems Engineering Intern",
+    "categories": {"location": "Hong Kong", "commitment": "Intern", "team": "Infrastructure"},
+    "description": "<p>Build reliable systems.</p>",
+    "descriptionPlain": "Build reliable systems.",
+    "lists": [{"text": "Requirements", "content": "<ul><li>Python and Linux</li><li>C++ experience</li></ul>"}],
+    "additional": "<p>Enrollment requirements vary.</p>",
+    "hostedUrl": "https://example.org/jobs/example-posting-001",
+    "applyUrl": "https://example.org/jobs/example-posting-001/apply",
+    "workplaceType": "hybrid"
+  }
+]

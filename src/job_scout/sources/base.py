@@ -1,0 +1,87 @@
+"""Shared source contract and respectful HTTP transport."""
+
+import asyncio
+import random
+import time
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
+from typing import Protocol
+
+import httpx
+
+from job_scout.models import Job, SourceConfig
+
+
+class SourceError(Exception):
+    """An employer collection could not be completed safely."""
+
+
+class JobSource(Protocol):
+    async def fetch_jobs(self, config: SourceConfig) -> list[Job]: ...
+
+
+class BoardHTTP:
+    """Shared request pacing, finite retries and explicit request timeouts."""
+
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        attempts: int = 3,
+        interval: float = 0.5,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        if attempts < 1 or interval < 0:
+            raise ValueError("attempts must be positive and interval nonnegative")
+        self.client = client
+        self.attempts = attempts
+        self.interval = interval
+        self.sleep = sleep
+        self._lock = asyncio.Lock()
+        self._next_request = 0.0
+
+    async def _pace(self) -> None:
+        async with self._lock:
+            await self.sleep(max(0.0, self._next_request - time.monotonic()))
+            self._next_request = time.monotonic() + self.interval
+
+    def _retry_after(self, response: httpx.Response) -> float:
+        value = response.headers.get("Retry-After")
+        if not value:
+            return 0.0
+        try:
+            delay = float(value)
+        except ValueError:
+            try:
+                delay = (parsedate_to_datetime(value) - datetime.now(UTC)).total_seconds()
+            except (ValueError, TypeError, OverflowError):
+                return 0.0
+        # Do not retry earlier than the server requests; defer long waits to a later run.
+        if delay > 60:
+            raise SourceError("Server requested a long Retry-After; retry collection later")
+        return max(0.0, delay)
+
+    async def get_json(self, url: str, params: dict[str, str | int]) -> object:
+        for attempt in range(self.attempts):
+            await self._pace()
+            delay = 0.0
+            try:
+                response = await self.client.get(url, params=params, timeout=20.0)
+            except httpx.TransportError as exc:
+                reason = f"Transport failure: {type(exc).__name__}"
+            else:
+                if response.status_code == 429 or 500 <= response.status_code < 600:
+                    reason = f"HTTP {response.status_code} after retries"
+                    delay = self._retry_after(response)
+                elif not response.is_success:
+                    raise SourceError(f"HTTP {response.status_code}; check board ID and region")
+                else:
+                    try:
+                        return response.json()
+                    except ValueError as exc:
+                        raise SourceError("Response is not valid JSON") from exc
+            if attempt == self.attempts - 1:
+                raise SourceError(reason)
+            await self.sleep(max(delay, 2**attempt + random.uniform(0, 0.5)))
+        raise AssertionError("Unreachable")

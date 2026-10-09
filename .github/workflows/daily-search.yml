@@ -6,7 +6,7 @@ name: Daily search
       timezone: Europe/Rome
     - cron: '47 10 * * *'
       timezone: Europe/Rome
-    - cron: '23 01 * * *'
+    - cron: '05 23 * * *'
       timezone: Europe/Rome
   workflow_dispatch:
     inputs:

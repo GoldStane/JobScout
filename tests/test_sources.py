@@ -7,8 +7,8 @@ import httpx
 import pytest
 
 from job_scout.models import SourceConfig
-from job_scout.sources.base import BoardHTTP, SourceError
 from job_scout.sources.ashby import AshbySource
+from job_scout.sources.base import BoardHTTP, SourceError
 from job_scout.sources.greenhouse import GreenhouseSource
 from job_scout.sources.lever import LeverSource
 
@@ -88,7 +88,14 @@ def test_ashby_fixture():
     assert job.posted_at.tzinfo == UTC
 
 
-@pytest.mark.parametrize("provider,body", [("greenhouse", {"jobs": []}), ("lever", []), ("ashby", {"jobs": []})])
+@pytest.mark.parametrize(
+    "provider,body",
+    [
+        ("greenhouse", {"jobs": []}),
+        ("lever", []),
+        ("ashby", {"jobs": []}),
+    ],
+)
 def test_empty_results(provider, body):
     assert fetch(provider, body) == []
 

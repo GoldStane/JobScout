@@ -1,9 +1,9 @@
 """Ashby public Job Board API adapter."""
 
-from datetime import datetime, UTC
+from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, HttpUrl, TypeAdapter, ValidationError
+from pydantic import BaseModel, HttpUrl, ValidationError
 
 from job_scout.models import Job, NonEmpty, SourceConfig, utc_now
 from job_scout.normalize import html_to_text
@@ -96,12 +96,17 @@ class AshbySource:
                     pass
 
             # Build description
-            description = post.descriptionPlain or html_to_text(post.descriptionHtml or "", encoded=True)
+            description = post.descriptionPlain or html_to_text(
+                post.descriptionHtml or "", encoded=True
+            )
 
             # Compensation summary
             compensation_summary = None
             if post.compensation:
-                compensation_summary = post.compensation.compensationTierSummary or post.compensation.scrapeableCompensationSalarySummary
+                compensation_summary = (
+                    post.compensation.compensationTierSummary
+                    or post.compensation.scrapeableCompensationSalarySummary
+                )
 
             jobs.append(
                 Job(

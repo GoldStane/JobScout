@@ -218,3 +218,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# JobScout private configuration and local data
+.env.*
+!.env.example
+config/*.yaml
+!config/*.example.yaml
+private/
+data/
+*.sqlite
+*.sqlite3
+*.db
+*.db-*
+*.sqlite-*
+*.sqlite3-*

@@ -2,11 +2,11 @@ name: Daily search
 
 'on':
   schedule:
-    - cron: '17 8 * * *'
+    - cron: '00 9 * * *'
       timezone: Europe/Rome
-    - cron: '47 10 * * *'
+    - cron: '00 15 * * *'
       timezone: Europe/Rome
-    - cron: '05 23 * * *'
+    - cron: '12 23 * * *'
       timezone: Europe/Rome
   workflow_dispatch:
     inputs:

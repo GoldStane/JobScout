@@ -107,7 +107,16 @@ def evaluate_eligibility(job: Job, profile: Profile) -> EligibilityResult:
             unknowns.append("Graduation window is incomplete or unrecognized")
         else:
             graduation = profile.education.expected_graduation_date
-            if graduation is None:
+            year = profile.education.expected_graduation_year
+            if graduation is None and year is not None:
+                earliest, latest = date(year, 1, 1), date(year, 12, 31)
+                if latest < lower or earliest > upper:
+                    rejections.append("Expected graduation year falls outside the stated window")
+                elif lower <= earliest and latest <= upper:
+                    evidence.append("Entire expected graduation year is within the stated window")
+                else:
+                    unknowns.append("Graduation year overlaps the window; exact date is unknown")
+            elif graduation is None:
                 unknowns.append("Expected graduation date is unknown")
             elif not lower <= graduation <= upper:
                 rejections.append("Expected graduation falls outside the stated inclusive window")

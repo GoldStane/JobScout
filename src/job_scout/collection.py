@@ -7,6 +7,7 @@ import httpx
 
 from job_scout.models import CollectionReport, SourceConfig, SourceRegistry, SourceResult, utc_now
 from job_scout.sources.base import BoardHTTP, JobSource, SourceError
+from job_scout.sources.ashby import AshbySource
 from job_scout.sources.greenhouse import GreenhouseSource
 from job_scout.sources.lever import LeverSource
 
@@ -24,6 +25,7 @@ async def collect(
         raise ValueError("concurrency must be positive")
     http = BoardHTTP(client, interval=interval)
     adapters: dict[str, JobSource] = {
+        "ashby": AshbySource(http),
         "greenhouse": GreenhouseSource(http),
         "lever": LeverSource(http),
     }

@@ -1,0 +1,88 @@
+{
+  "jobs": [
+    {
+      "id": "ashby-123",
+      "title": "Senior Software Engineer",
+      "location": "San Francisco, CA, USA",
+      "secondaryLocations": [],
+      "department": "Engineering",
+      "team": "Platform",
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "descriptionHtml": "<p>Build great things</p>",
+      "descriptionPlain": "Build great things",
+      "publishedAt": "2026-01-15T10:00:00Z",
+      "employmentType": "FullTime",
+      "address": {
+        "addressLocality": "San Francisco",
+        "addressRegion": "CA",
+        "addressCountry": "USA"
+      },
+      "jobUrl": "https://jobs.ashbyhq.com/example/ashby-123",
+      "applyUrl": "https://jobs.ashbyhq.com/example/ashby-123/apply",
+      "isListed": true,
+      "compensation": {
+        "compensationTierSummary": "$150k - $200k",
+        "scrapeableCompensationSalarySummary": "$150,000 - $200,000"
+      }
+    },
+    {
+      "id": "ashby-456",
+      "title": "Backend Engineer",
+      "location": "New York, NY, USA",
+      "secondaryLocations": [
+        {
+          "location": "Remote, USA",
+          "address": {
+            "addressLocality": "Remote",
+            "addressRegion": null,
+            "addressCountry": "USA"
+          }
+        }
+      ],
+      "department": "Engineering",
+      "team": "Core",
+      "isRemote": true,
+      "workplaceType": "Hybrid",
+      "descriptionHtml": "<p>Build backend systems</p>",
+      "descriptionPlain": "Build backend systems",
+      "publishedAt": "2026-01-10T10:00:00Z",
+      "employmentType": "FullTime",
+      "address": {
+        "addressLocality": "New York",
+        "addressRegion": "NY",
+        "addressCountry": "USA"
+      },
+      "jobUrl": "https://jobs.ashbyhq.com/example/ashby-456",
+      "applyUrl": "https://jobs.ashbyhq.com/example/ashby-456/apply",
+      "isListed": true,
+      "compensation": {
+        "compensationTierSummary": "$130k - $180k",
+        "scrapeableCompensationSalarySummary": "$130,000 - $180,000"
+      }
+    },
+    {
+      "id": "ashby-789",
+      "title": "Unlisted Intern",
+      "location": "Remote",
+      "secondaryLocations": [],
+      "department": "Engineering",
+      "team": "Interns",
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "descriptionHtml": "<p>Internship</p>",
+      "descriptionPlain": "Internship",
+      "publishedAt": "2026-01-05T10:00:00Z",
+      "employmentType": "Intern",
+      "address": {
+        "addressLocality": "Remote",
+        "addressRegion": null,
+        "addressCountry": "USA"
+      },
+      "jobUrl": "https://jobs.ashbyhq.com/example/ashby-789",
+      "applyUrl": "https://jobs.ashbyhq.com/example/ashby-789/apply",
+      "isListed": false,
+      "compensation": null
+    }
+  ]
+}

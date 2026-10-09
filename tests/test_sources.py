@@ -8,6 +8,7 @@ import pytest
 
 from job_scout.models import SourceConfig
 from job_scout.sources.base import BoardHTTP, SourceError
+from job_scout.sources.ashby import AshbySource
 from job_scout.sources.greenhouse import GreenhouseSource
 from job_scout.sources.lever import LeverSource
 
@@ -29,9 +30,11 @@ def fetch(provider, body, **kwargs):
         async with httpx.AsyncClient(
             transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body))
         ) as client:
-            adapter = {"greenhouse": GreenhouseSource, "lever": LeverSource}[provider](
-                BoardHTTP(client, interval=0)
-            )
+            adapter = {
+                "greenhouse": GreenhouseSource,
+                "lever": LeverSource,
+                "ashby": AshbySource,
+            }[provider](BoardHTTP(client, interval=0))
             return await adapter.fetch_jobs(config(provider, **kwargs))
 
     return asyncio.run(run())
@@ -64,25 +67,59 @@ def test_lever_fixture():
     assert job.posted_at is None
 
 
-@pytest.mark.parametrize("provider,body", [("greenhouse", {"jobs": []}), ("lever", [])])
+def test_ashby_fixture():
+    jobs = fetch("ashby", payload("ashby"))
+    assert len(jobs) == 2  # unlisted job should be filtered out
+    job = jobs[0]
+    assert job.source == "ashby"
+    assert job.source_job_id == "ashby-123"
+    assert job.company_identifier == "example"
+    assert job.title == "Senior Software Engineer"
+    assert job.location_text == "San Francisco, CA, USA"
+    assert job.remote_type == "remote"
+    assert job.employment_type == "FullTime"
+    assert job.description_text == "Build great things"
+    assert str(job.application_url) == "https://jobs.ashbyhq.com/example/ashby-123/apply"
+    assert job.source_metadata["compensation_summary"] == "$150k - $200k"
+    assert job.source_metadata["department"] == "Engineering"
+    assert job.source_metadata["team"] == "Platform"
+    assert job.posted_at is not None
+    assert job.posted_at.hour == 10
+    assert job.posted_at.tzinfo == UTC
+
+
+@pytest.mark.parametrize("provider,body", [("greenhouse", {"jobs": []}), ("lever", []), ("ashby", {"jobs": []})])
 def test_empty_results(provider, body):
     assert fetch(provider, body) == []
 
 
 @pytest.mark.parametrize(
     "provider,body",
-    [("greenhouse", {}), ("greenhouse", {"jobs": [{}]}), ("lever", {}), ("lever", [{}])],
+    [
+        ("greenhouse", {}),
+        ("greenhouse", {"jobs": [{}]}),
+        ("lever", {}),
+        ("lever", [{}]),
+        ("ashby", {}),
+        ("ashby", {"jobs": [{}]}),
+    ],
 )
 def test_malformed_response(provider, body):
     with pytest.raises(SourceError, match="Invalid"):
         fetch(provider, body)
 
 
-@pytest.mark.parametrize("provider", ["greenhouse", "lever"])
+@pytest.mark.parametrize("provider", ["greenhouse", "lever", "ashby"])
 def test_unsafe_url_rejected(provider):
     body = payload(provider)
-    post = body["jobs"][0] if provider == "greenhouse" else body[0]
-    post["absolute_url" if provider == "greenhouse" else "applyUrl"] = "javascript:alert(1)"
+    post = body["jobs"][0] if provider in {"greenhouse", "ashby"} else body[0]
+    if provider == "greenhouse":
+        url_field = "absolute_url"
+    elif provider == "ashby":
+        url_field = "jobUrl"
+    else:
+        url_field = "applyUrl"
+    post[url_field] = "javascript:alert(1)"
     with pytest.raises(SourceError):
         fetch(provider, body)
 

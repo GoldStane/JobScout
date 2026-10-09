@@ -69,6 +69,17 @@ async def run_digest(
         delivered = deliveries.delivered_keys(recipient)
         # Only freshly observed jobs from successful sources, never stale/disabled boards.
         jobs = [job for source in report.sources if source.error is None for job in source.jobs]
+        # Fresh source records reset first_seen_at; retain stored discovery dates
+        # for consistent sorting in both read-only previews and actual delivery.
+        first_seen = {
+            job_key(job): job.first_seen_at for job in repository.jobs(include_closed=True)
+        }
+        jobs = [
+            job.model_copy(
+                update={"first_seen_at": first_seen.get(job_key(job), job.first_seen_at)}
+            )
+            for job in jobs
+        ]
         matches = [
             match
             for match in rank_jobs(jobs, profile)

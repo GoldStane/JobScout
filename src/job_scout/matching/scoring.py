@@ -136,16 +136,70 @@ def rank_jobs(
     matches = [score_job(job, profile) for job in jobs if job.status == "open"]
     if not include_ineligible:
         matches = [match for match in matches if match.eligibility.status != "ineligible"]
-    return sorted(
+    return sort_matches([match for match in matches if passes_filters(match, profile)], profile)
+
+
+def passes_filters(match: MatchResult, profile: Profile) -> bool:
+    filters = profile.filters
+    for allowed, value, unknown in [
+        (filters.employment_types, match.role_type, filters.unknown_employment_type),
+        (filters.remote_types, match.job.remote_type, filters.unknown_remote_type),
+    ]:
+        if allowed and (unknown == "exclude" if value is None else value not in allowed):
+            return False
+    location = (match.job.location_text or "").strip()
+
+    def matches(place):
+        terms = [place, *profile.preferences.location_terms.get(place, [])]
+        if place.casefold() == "europe":
+            terms += EUROPE_TERMS
+        return any(contains(location, term) for term in terms)
+
+    if filters.allowed_locations or filters.excluded_locations:
+        if not location or location.casefold() in {
+            "unknown",
+            "unspecified",
+            "remote",
+            "anywhere",
+            "worldwide",
+        }:
+            return filters.unknown_location == "include"
+        if any(matches(place) for place in filters.excluded_locations):
+            return False
+        if filters.allowed_locations and not any(
+            matches(place) for place in filters.allowed_locations
+        ):
+            return False
+    return True
+
+
+def sort_matches(matches: list[MatchResult], profile: Profile) -> list[MatchResult]:
+    # Stable identity breaks ties independently of collection/source ordering.
+    ordered = sorted(
         matches,
-        key=lambda match: (
-            match.eligibility.status == "ineligible",
-            -match.score,
-            match.job.company.casefold(),
-            match.job.title.casefold(),
-            match.job.source,
-            match.job.source_region,
-            match.job.company_identifier,
-            match.job.source_job_id,
+        key=lambda m: (
+            m.job.company.casefold(),
+            m.job.title.casefold(),
+            m.job.source,
+            m.job.source_region,
+            m.job.company_identifier,
+            m.job.source_job_id,
         ),
     )
+
+    def value(match, field):
+        if field == "score":
+            return match.score
+        item = getattr(match.job, "location_text" if field == "location" else field)
+        return item.strip().casefold() or None if isinstance(item, str) else item
+
+    # Stable sorts from lowest to highest priority; nulls always last.
+    for rule in reversed(profile.sort):
+        known = [m for m in ordered if value(m, rule.field) is not None]
+        missing = [m for m in ordered if value(m, rule.field) is None]
+        ordered = (
+            sorted(known, key=lambda m: value(m, rule.field), reverse=rule.direction == "desc")
+            + missing
+        )
+    # Explicitly included hard exclusions remain below viable matches.
+    return sorted(ordered, key=lambda m: m.eligibility.status == "ineligible")

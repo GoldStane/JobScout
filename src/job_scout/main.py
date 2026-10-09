@@ -17,7 +17,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from job_scout.collection import collect
 from job_scout.config import load_registry
-from job_scout.matching.profile import load_profile
+from job_scout.matching.profile import Profile, load_profile
 from job_scout.matching.scoring import rank_jobs
 from job_scout.models import CollectionReport, SourceRegistry, utc_now
 from job_scout.notifications.service import run_digest
@@ -31,6 +31,7 @@ from job_scout.storage.database import (
 )
 from job_scout.storage.delivery import DeliveryBusy, DeliveryRepository, recipient_key
 from job_scout.storage.repository import Repository
+from job_scout.validation import validate_config
 
 
 async def _collect(registry: SourceRegistry) -> CollectionReport:
@@ -60,6 +61,26 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
     if args.command in {"match", "run"}:
         try:
             profile = load_profile(args.profile).for_track(args.track)
+            data = profile.model_dump()
+            if args.sort:
+                data["sort"] = [
+                    dict(zip(("field", "direction"), term.split(":"), strict=True))
+                    for term in args.sort.split(",")
+                ]
+            for name in [
+                "employment_types",
+                "allowed_locations",
+                "excluded_locations",
+                "remote_types",
+            ]:
+                override = getattr(args, name)
+                if override is not None:
+                    data["filters"][name] = override
+            for name in ["unknown_employment_type", "unknown_location", "unknown_remote_type"]:
+                override = getattr(args, name)
+                if override is not None:
+                    data["filters"][name] = override
+            profile = Profile.model_validate(data)
         except (OSError, yaml.YAMLError, ValueError) as exc:
             parser.exit(
                 2,
@@ -119,7 +140,8 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
             return 1 if result.source_failures else 0
         elif args.command == "match":
             assert profile is not None
-            ranked = rank_jobs(repository.jobs(), profile, include_ineligible=True)
+            jobs = repository.jobs()
+            ranked = rank_jobs(jobs, profile, include_ineligible=True)
             rejected = sum(item.eligibility.status == "ineligible" for item in ranked)
             selected = [
                 item
@@ -131,7 +153,8 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
             print(
                 json.dumps(
                     {
-                        "total_open_jobs": len(ranked),
+                        "total_open_jobs": len(jobs),
+                        "filtered_out_jobs": len(jobs) - len(ranked),
                         "ineligible_jobs": rejected,
                         "matching_jobs_before_limit": len(selected),
                         "matches": [
@@ -222,7 +245,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     matching.add_argument(
         "--include-ineligible", action="store_true", help="Include exclusions for review"
     )
+    validation = subcommands.add_parser(
+        "validate-config", help="Validate YAML offline without database or network access"
+    )
+    validation.add_argument("--profile", type=Path, default=Path("config/profile.yaml"))
+    validation.add_argument("--config", type=Path, default=Path("config/companies.yaml"))
+    for command in [run, matching]:
+        command.add_argument(
+            "--sort", help="Priority order, e.g. score:desc,posted_at:desc,location:asc"
+        )
+        command.add_argument(
+            "--employment-types", nargs="+", choices=["internship", "graduate", "entry_level"]
+        )
+        command.add_argument("--allowed-locations", nargs="+")
+        command.add_argument("--excluded-locations", nargs="+")
+        command.add_argument("--remote-types", nargs="+", choices=["remote", "hybrid", "on_site"])
+        for name in ["employment-type", "location", "remote-type"]:
+            command.add_argument(f"--unknown-{name}", choices=["include", "exclude"])
     args = parser.parse_args(argv)
+    if args.command == "validate-config":
+        return validate_config(args.profile, args.config)
+    if args.command in {"match", "run"} and args.sort:
+        terms = args.sort.split(",")
+        if any(len(term.split(":")) != 2 or not all(term.split(":")) for term in terms):
+            parser.error("--sort requires field:asc or field:desc separated by commas")
     if args.command in {"match", "run"}:
         if args.limit is not None and not 1 <= args.limit <= 1000:
             parser.error("--limit must be between 1 and 1000")

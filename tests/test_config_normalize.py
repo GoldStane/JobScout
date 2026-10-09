@@ -10,7 +10,7 @@ from job_scout.normalize import html_to_text
 
 def test_example_registry_disabled():
     registry = load_registry(Path("config/companies.example.yaml"))
-    assert len(registry.sources) == 2
+    assert len(registry.sources) == 3
     assert not any(source.enabled for source in registry.sources)
 
 

@@ -10,3 +10,7 @@ sources:
     board_id: REPLACE_WITH_VERIFIED_LEVER_BOARD_ID
     region: global  # Use eu only for jobs.eu.lever.co boards.
     enabled: false
+  - source: ashby
+    company: Example Ashby Employer
+    board_id: REPLACE_WITH_VERIFIED_ASHBY_BOARD_ID
+    enabled: false

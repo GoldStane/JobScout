@@ -19,7 +19,21 @@ class Education(Settings):
     degree: Literal["high_school", "associate", "bachelors", "masters", "doctorate"] | None = None
     field: NonEmpty | None = None
     expected_graduation_date: date | None = None
+    expected_graduation_year: Annotated[int, Field(strict=True, ge=1900, le=9999)] | None = None
     currently_enrolled: StrictBool | None = None
+
+    @field_validator("expected_graduation_date", mode="before")
+    @classmethod
+    def explicit_date(cls, value):
+        if isinstance(value, (int, float)):
+            raise ValueError("Use YYYY-MM-DD or expected_graduation_year")
+        return value
+
+    @model_validator(mode="after")
+    def one_graduation_precision(self):
+        if self.expected_graduation_date is not None and self.expected_graduation_year is not None:
+            raise ValueError("Set graduation date OR year, not both")
+        return self
 
 
 class EligibilitySettings(Settings):
@@ -80,7 +94,36 @@ class CareerTrack(Settings):
     ranking_weights: RankingWeights | None = None
 
 
+class Filters(Settings):
+    employment_types: list[Literal["internship", "graduate", "entry_level"]] = Field(
+        default_factory=list
+    )
+    allowed_locations: list[NonEmpty] = Field(default_factory=list)
+    excluded_locations: list[NonEmpty] = Field(default_factory=list)
+    remote_types: list[Literal["remote", "hybrid", "on_site"]] = Field(default_factory=list)
+    unknown_employment_type: Literal["include", "exclude"] = "include"
+    unknown_location: Literal["include", "exclude"] = "include"
+    unknown_remote_type: Literal["include", "exclude"] = "include"
+
+
+class SortRule(Settings):
+    field: Literal["score", "posted_at", "first_seen_at", "location", "company", "title"]
+    direction: Literal["asc", "desc"] = "desc"
+
+
 class Profile(Settings):
+    filters: Filters = Field(default_factory=Filters)
+    sort: Annotated[list[SortRule], Field(min_length=1)] = Field(
+        default_factory=lambda: [SortRule(field="score", direction="desc")]
+    )
+
+    @field_validator("sort")
+    @classmethod
+    def unique_sort_fields(cls, rules):
+        if len({rule.field for rule in rules}) != len(rules):
+            raise ValueError("Each sort field may appear only once")
+        return rules
+
     education: Education = Field(default_factory=Education)
     eligibility: EligibilitySettings = Field(default_factory=EligibilitySettings)
     preferences: Preferences = Field(default_factory=Preferences)

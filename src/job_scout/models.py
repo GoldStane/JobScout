@@ -16,7 +16,7 @@ from pydantic import (
 
 NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 UTCDateTime = Annotated[AwareDatetime, AfterValidator(lambda value: value.astimezone(UTC))]
-Provider = Literal["greenhouse", "lever"]
+Provider = Literal["greenhouse", "lever", "ashby", "smartrecruiters"]
 
 
 class SourceConfig(BaseModel):
@@ -30,7 +30,7 @@ class SourceConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_source(self) -> "SourceConfig":
-        if self.source == "greenhouse" and self.region != "global":
+        if self.source in {"greenhouse", "ashby"} and self.region != "global":
             raise ValueError("region=eu is only supported for Lever")
         if self.enabled and self.board_id.startswith("REPLACE_WITH_"):
             raise ValueError("Replace placeholder board IDs before enabling a source")

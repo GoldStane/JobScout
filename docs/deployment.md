@@ -108,6 +108,19 @@ Telegram delivery and records confirmed message parts in PostgreSQL. Check the
 chat. Rerunning send on the same local date returns `already_sent` after completion.
 Mode **status** shows counts of recorded notification-part statuses without sending.
 
+### Additional manual digests on the same day
+
+After publishing this workflow version to the default branch, select mode **send**
+and check **additional** in **Run workflow** to bypass `already_sent`. Select
+**preview** with the same checkbox for a read-only preview. The checkbox defaults
+to off; scheduled runs cannot enable it.
+
+This option recollects jobs with the current profile and sends only previously
+undelivered matches. A no-new-matches message is sent when nothing remains.
+Existing confirmed notifications stay recorded. Unfinished deliveries resume
+first, and uncertain parts still require explicit `retry_uncertain` after checking
+Telegram. No new secrets or database migration are needed.
+
 ## 6. Enable the daily schedule
 
 After the manual send works, open **Settings → Secrets and variables → Actions →

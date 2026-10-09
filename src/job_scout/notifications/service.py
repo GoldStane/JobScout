@@ -41,6 +41,7 @@ async def run_digest(
     now: datetime,
     dry_run: bool = False,
     retry_uncertain: bool = False,
+    additional: bool = False,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> RunResult:
     if not dry_run and (sender is None or chat_id is None):
@@ -49,7 +50,9 @@ async def run_digest(
     local_date = now.astimezone(ZoneInfo(profile.digest.timezone)).date().isoformat()
     saved = deliveries.existing(recipient, local_date)
     if saved and saved.complete:
-        return RunResult([], "already_sent")
+        if not additional:
+            return RunResult([], "already_sent")
+        saved = None
     report = None
     if saved is None:
         # No delivery lease during slow source collection. Recheck after acquiring it.
@@ -106,11 +109,18 @@ async def run_digest(
     try:
         saved = deliveries.existing(recipient, local_date)
         if saved and saved.complete:
-            return RunResult([], "already_sent")
+            if not additional or report is None:
+                return RunResult([], "already_sent")
+            saved = None
         if saved is None:
             logger.info("digest_preparing date=%s", local_date)
             deliveries.prepare(
-                recipient, owner, local_date, profile.digest.timezone, preview_parts()
+                recipient,
+                owner,
+                local_date,
+                profile.digest.timezone,
+                preview_parts(),
+                extend_completed=additional,
             )
             saved = deliveries.existing(recipient, local_date)
         assert saved is not None and sender is not None

@@ -107,6 +107,22 @@ def test_postgres_outbox_and_lease(postgres):
     deliveries.finish_attempt(key, owner, part.id, message_id=123)
     assert deliveries.delivered_keys(key) == {"job"}
     assert deliveries.existing(key, "2026-10-09").complete
+    deliveries.prepare(
+        key,
+        owner,
+        "2026-10-09",
+        "Europe/Rome",
+        [DigestPart("Additional", ["new-job"])],
+        extend_completed=True,
+    )
+    saved = deliveries.existing(key, "2026-10-09")
+    assert not saved.complete
+    assert saved.parts[0].status == "sent"
+    assert deliveries.delivered_keys(key) == {"job"}
+    deliveries.begin_attempt(key, owner, saved.parts[1].id)
+    deliveries.finish_attempt(key, owner, saved.parts[1].id, message_id=124)
+    assert deliveries.existing(key, "2026-10-09").complete
+    assert deliveries.delivered_keys(key) == {"job", "new-job"}
     deliveries.release(key, owner)
 
 

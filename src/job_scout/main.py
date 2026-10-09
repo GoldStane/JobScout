@@ -131,6 +131,7 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
                         now=utc_now(),
                         dry_run=args.dry_run,
                         retry_uncertain=args.retry_uncertain,
+                        additional=args.additional,
                     )
 
             result = asyncio.run(execute())
@@ -226,6 +227,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     run.add_argument("--min-score", type=float)
     run.add_argument(
         "--dry-run", action="store_true", help="Preview without writes or Telegram sends"
+    )
+    run.add_argument(
+        "--additional",
+        action="store_true",
+        help="Collect again after today's digest; send only previously undelivered jobs",
     )
     run.add_argument(
         "--retry-uncertain",

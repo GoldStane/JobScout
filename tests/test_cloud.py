@@ -24,6 +24,7 @@ def environment(monkeypatch):
         "JOBSCOUT_PROFILE_YAML": Path("config/profile.example.yaml").read_text(),
         "JOBSCOUT_MODE": "preview",
         "JOBSCOUT_RETRY_UNCERTAIN": "false",
+        "JOBSCOUT_ADDITIONAL": "false",
         "GITHUB_EVENT_NAME": "workflow_dispatch",
     }
     for name, value in values.items():
@@ -153,3 +154,21 @@ def test_workflows_keep_ci_offline_and_schedule_opt_in():
     assert "JOBSCOUT_SCHEDULE_ENABLED" in daily["jobs"]["daily"]["if"]
     assert all(item["timezone"] == "Europe/Rome" for item in daily["on"]["schedule"])
     assert daily["on"]["workflow_dispatch"]["inputs"]["mode"]["default"] == "preview"
+
+
+@pytest.mark.parametrize("mode", ["preview", "send"])
+def test_manual_additional_flag(environment, monkeypatch, mode):
+    monkeypatch.setenv("JOBSCOUT_MODE", mode)
+    monkeypatch.setenv("JOBSCOUT_ADDITIONAL", "true")
+    calls = []
+    monkeypatch.setattr(cloud, "invoke", lambda args: calls.append(args) or 0)
+    assert cloud.main() == 0
+    assert "--additional" in calls[0]
+
+
+@pytest.mark.parametrize("event,mode", [("schedule", "send"), ("workflow_dispatch", "status")])
+def test_additional_restricted_to_manual_delivery(environment, monkeypatch, event, mode):
+    monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    monkeypatch.setenv("JOBSCOUT_MODE", mode)
+    monkeypatch.setenv("JOBSCOUT_ADDITIONAL", "true")
+    assert cloud.main() == 2

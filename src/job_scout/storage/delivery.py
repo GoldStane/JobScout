@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
@@ -141,18 +141,48 @@ class DeliveryRepository:
             return {key for row in rows for key in row.job_keys}
 
     def prepare(
-        self, recipient: str, owner: str, local_date: str, timezone: str, parts: list[DigestPart]
+        self,
+        recipient: str,
+        owner: str,
+        local_date: str,
+        timezone: str,
+        parts: list[DigestPart],
+        *,
+        extend_completed: bool = False,
     ) -> None:
         if not parts:
             raise ValueError("Digest must contain at least one message")
         with Session(self.engine) as session, session.begin():
             self._guard(session, recipient, owner)
-            row = DigestRow(
-                recipient=recipient, local_date=local_date, timezone=timezone, created_at=utc_now()
+            row = session.scalar(
+                select(DigestRow).where(
+                    DigestRow.recipient == recipient,
+                    DigestRow.local_date == local_date,
+                )
             )
-            session.add(row)
-            session.flush()
-            for index, part in enumerate(parts):
+            offset = 0
+            if row is not None:
+                if not extend_completed or row.completed_at is None:
+                    raise ValueError("Existing digest must be resumed, not overwritten")
+                offset = (
+                    session.scalar(
+                        select(func.max(NotificationRow.part_index)).where(
+                            NotificationRow.digest_id == row.id,
+                        )
+                    )
+                    + 1
+                )
+                row.completed_at = None
+            else:
+                row = DigestRow(
+                    recipient=recipient,
+                    local_date=local_date,
+                    timezone=timezone,
+                    created_at=utc_now(),
+                )
+                session.add(row)
+                session.flush()
+            for index, part in enumerate(parts, start=offset):
                 session.add(
                     NotificationRow(
                         digest_id=row.id,

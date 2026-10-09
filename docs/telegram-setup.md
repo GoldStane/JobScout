@@ -165,6 +165,12 @@ Exit codes: `0` success/preview/already sent; `1` some source collection failed
 although the digest was previewed or sent; `2` invalid input/credentials; `3`
 database error; `4` delivery failure, ambiguous outcome, or active sender.
 
+To request another digest today, run `job-scout run --additional`; preview with
+`job-scout run --additional --dry-run`. Already-delivered jobs remain suppressed,
+and existing unfinished digests resume first. This does not force uncertain
+retries or erase history. In GitHub Actions, use send/preview mode with the
+**additional** checkbox.
+
 ## 7. Unattended scheduling
 
 Follow the [Milestone 6 deployment guide](deployment.md) for GitHub Actions,

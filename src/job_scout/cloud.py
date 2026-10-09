@@ -110,6 +110,13 @@ def main() -> int:
             raise CloudConfigError("Invalid JOBSCOUT_RETRY_UNCERTAIN")
         if retry == "true" and (event != "workflow_dispatch" or mode != "send"):
             raise CloudConfigError("Uncertain retries require manual send mode")
+        additional = os.environ.get("JOBSCOUT_ADDITIONAL", "false")
+        if additional not in {"true", "false"}:
+            raise CloudConfigError("Invalid JOBSCOUT_ADDITIONAL")
+        if additional == "true" and (
+            event != "workflow_dispatch" or mode not in {"send", "preview"}
+        ):
+            raise CloudConfigError("Additional digests require manual send or preview mode")
         validate_database(required("DATABASE_URL"))
         if mode in {"initialize", "migrate"}:
             return invoke(["db-init" if mode == "initialize" else "db-migrate"])
@@ -145,6 +152,8 @@ def main() -> int:
                 args.append("--dry-run")
             if retry == "true":
                 args.append("--retry-uncertain")
+            if additional == "true":
+                args.append("--additional")
             return invoke(args)
     except CloudConfigError as exc:
         print(str(exc))

@@ -21,6 +21,11 @@ name: Daily search
           - initialize
           - migrate
           - status
+      additional:
+        description: 'Send/preview again today, keeping already-delivered jobs suppressed'
+        type: boolean
+        required: false
+        default: false
       retry_uncertain:
         description: 'Send mode only: retry unconfirmed messages; duplicates are possible'
         type: boolean
@@ -58,6 +63,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           JOBSCOUT_COMPANIES_YAML: ${{ secrets.JOBSCOUT_COMPANIES_YAML }}
           JOBSCOUT_PROFILE_YAML: ${{ secrets.JOBSCOUT_PROFILE_YAML }}
+          JOBSCOUT_ADDITIONAL: ${{ inputs.additional && 'true' || 'false' }}
           JOBSCOUT_MODE: ${{ inputs.mode || 'send' }}
           JOBSCOUT_RETRY_UNCERTAIN: ${{ inputs.retry_uncertain && 'true' || 'false' }}
         run: python -m job_scout.cloud

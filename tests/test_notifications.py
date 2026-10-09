@@ -89,7 +89,17 @@ def setup(tmp_path):
     engine.dispose()
 
 
-def run(setup, sender, *, data=None, now=NOW, dry_run=False, retry=False, chat_id="123"):
+def run(
+    setup,
+    sender,
+    *,
+    data=None,
+    now=NOW,
+    dry_run=False,
+    retry=False,
+    chat_id="123",
+    additional=False,
+):
     repository, deliveries, profile = setup
 
     async def collect():
@@ -106,6 +116,7 @@ def run(setup, sender, *, data=None, now=NOW, dry_run=False, retry=False, chat_i
             now=now,
             dry_run=dry_run,
             retry_uncertain=retry,
+            additional=additional,
             sleep=no_sleep,
         )
     )
@@ -303,3 +314,41 @@ def test_migration_preserves_existing_jobs(setup):
     assert DeliveryRepository(engine).status(recipient_key("123")) == []
     with Session(engine) as session:
         assert session.scalar(select(SchemaVersion.version)) == 2
+
+
+def test_additional_digest_keeps_history_and_sends_only_new_jobs(setup):
+    sender = FakeSender()
+    run(setup, sender)
+    original = setup[1].status(recipient_key("123"))[0]
+    sender.messages.clear()
+    assert run(setup, sender, data=report(2), additional=True).status == "sent"
+    text = "\n".join(sender.messages)
+    assert "C++ Engineer 1" in text and "C++ Engineer 0" not in text
+    assert setup[1].status(recipient_key("123"))[0] == original
+    assert len(setup[1].delivered_keys(recipient_key("123"))) == 2
+    assert run(setup, sender).status == "already_sent"
+    sender.messages.clear()
+    run(setup, sender, data=report(2), additional=True)
+    assert "No new relevant matches" in sender.messages[0]
+
+
+def test_additional_preview_is_read_only(setup):
+    run(setup, FakeSender())
+    before = setup[1].status(recipient_key("123"))
+    preview = run(setup, None, data=report(2), dry_run=True, additional=True)
+    assert preview.status == "dry_run"
+    assert "C++ Engineer 1" in "\n".join(preview.messages)
+    assert setup[1].status(recipient_key("123")) == before
+    assert len(setup[0].jobs()) == 1
+
+
+def test_failed_additional_digest_resumes_and_preserves_uncertain_guard(setup):
+    run(setup, FakeSender())
+    with pytest.raises(DeliveryError):
+        run(setup, FakeSender(fail_at=1, uncertain=True), data=report(2), additional=True)
+    with pytest.raises(DeliveryError, match="retry-uncertain"):
+        run(setup, FakeSender(), additional=True)
+    sender = FakeSender()
+    assert run(setup, sender, retry=True).status == "sent"
+    assert "C++ Engineer 0" not in "\n".join(sender.messages)
+    assert len(setup[1].delivered_keys(recipient_key("123"))) == 2

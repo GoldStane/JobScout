@@ -307,6 +307,14 @@ are possible for those unconfirmed parts. Five-minute renewable recipient leases
 prevent concurrent senders. Same-day completed runs return `already_sent`, even
 after reduced coverage; recovered sources contribute to the next day's digest.
 
+For an explicit additional same-day digest, use `job-scout run --additional`
+(or `--additional --dry-run` to preview). This collects again and sends only jobs
+not already confirmed delivered. If none remain, it sends a no-new-matches message.
+Unfinished digests resume first; uncertain outcomes still require the separate
+`--retry-uncertain` recovery option. Additional parts are appended to the day's
+outbox without deleting history; no database migration is required. Scheduled
+runs keep their once-per-day behavior.
+
 Delivery identity is source/region/board/posting ID; cross-board reposts can
 still appear separately. Keep the same database to preserve notification history.
 The [deployment guide](docs/deployment.md) explains unattended cloud execution.

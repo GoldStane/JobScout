@@ -1,0 +1,38 @@
+# Interests, skills, career tracks and locations use the existing --profile YAML.
+# Arbeitnow is a bounded feed, not a keyword-search endpoint.
+providers:
+  arbeitnow:
+    enabled: true
+    max_pages: 3
+    max_requests: 9  # Includes retries.
+    attempts: 3
+    interval_seconds: 1.0
+    max_runtime_seconds: 120.0
+    max_response_bytes: 5000000
+
+  # Opt-in remote-only provider, cached daily; attribution stays in every digest.
+  himalayas:
+    enabled: false
+    mode: browse  # Or search: rotates selected profile primary/secondary role queries daily.
+    page_size: 20  # Browse only; search has a provider-defined page size.
+    max_queries: 3  # Search only, without a role × location × seniority product.
+    max_pages: 3  # Per query; max_requests remains shared across this provider.
+    max_requests: 9
+    attempts: 3
+    interval_seconds: 1.0
+    max_runtime_seconds: 120.0
+    max_response_bytes: 5000000
+    # Search-only filters (otherwise omitted):
+    # country: Canada
+    # worldwide_only: true  # Alternative to country, not a work-authorization guarantee.
+    # sort: recent
+
+# Opportunistically validate recognized ATS links already present in job data.
+# No company-name crawling. Dry-run validates without registering anything.
+registration:
+  enabled: true
+  max_new_boards_per_run: 20
+  max_requests: 60  # Shared across all board validations, including retries.
+  max_runtime_seconds: 120.0
+  interval_seconds: 1.0
+  max_response_bytes: 2000000

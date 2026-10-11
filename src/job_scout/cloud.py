@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.engine import make_url
 
 from job_scout.config import load_registry
+from job_scout.discovery.settings import load_settings
 from job_scout.main import main as cli_main
 from job_scout.matching.profile import Profile, load_profile
 from job_scout.models import utc_now
@@ -130,24 +131,29 @@ def main() -> int:
             for name, secret in [
                 ("companies", "JOBSCOUT_COMPANIES_YAML"),
                 ("profile", "JOBSCOUT_PROFILE_YAML"),
+                ("discovery", "JOBSCOUT_DISCOVERY_YAML"),
             ]:
                 path = Path(directory) / f"{name}.yaml"
                 path.touch(mode=0o600)
-                path.write_text(required(secret), encoding="utf-8")
+                value = (
+                    required(secret) if name == "profile" else os.environ.get(secret, "").strip()
+                )
+                fallback = "sources: []" if name == "companies" else "{}"
+                path.write_text(value or fallback, encoding="utf-8")
                 paths[name] = path
             try:
-                registry = load_registry(paths["companies"])
+                load_registry(paths["companies"])
                 profile = load_profile(paths["profile"])
+                load_settings(paths["discovery"])
             except Exception:
                 raise CloudConfigError(
                     "Invalid private YAML; validate locally before updating secrets"
                 ) from None
-            if not any(source.enabled for source in registry.sources):
-                raise CloudConfigError("No enabled sources in JOBSCOUT_COMPANIES_YAML")
             if event == "schedule" and not schedule_due(profile, utc_now()):
                 print(json.dumps({"status": "before_send_after"}))
                 return 0
             args = ["run", "--config", str(paths["companies"]), "--profile", str(paths["profile"])]
+            args.extend(["--discovery-config", str(paths["discovery"])])
             if mode == "preview":
                 args.append("--dry-run")
             if retry == "true":

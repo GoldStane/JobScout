@@ -1,0 +1,6 @@
+# Copy to employers.txt and replace placeholders with real employer ATS board URLs.
+# One URL per line. Blank lines and lines beginning with # are ignored.
+# These are illustrative placeholders, not verified employers.
+https://jobs.lever.co/REPLACE_WITH_BOARD
+https://job-boards.greenhouse.io/REPLACE_WITH_BOARD
+https://jobs.ashbyhq.com/REPLACE_WITH_BOARD

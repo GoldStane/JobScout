@@ -31,9 +31,18 @@ class BoardHTTP:
         attempts: int = 3,
         interval: float = 0.5,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        max_bytes: int = 10_000_000,
+        max_requests: int = 300,
+        minimum_rate_limit_delay: float = 0,
     ) -> None:
         if attempts < 1 or interval < 0:
             raise ValueError("attempts must be positive and interval nonnegative")
+        if max_bytes < 1 or max_requests < 1:
+            raise ValueError("Response and request budgets must be positive")
+        self.minimum_rate_limit_delay = minimum_rate_limit_delay
+        self.max_bytes = max_bytes
+        self.max_requests = max_requests
+        self.requests = 0
         self.client = client
         self.attempts = attempts
         self.interval = interval
@@ -67,13 +76,38 @@ class BoardHTTP:
             await self._pace()
             delay = 0.0
             try:
-                response = await self.client.get(url, params=params, timeout=20.0)
+                if self.requests >= self.max_requests:
+                    raise SourceError("Request budget exhausted; retry later with a larger budget")
+                self.requests += 1
+                async with self.client.stream(
+                    "GET",
+                    url,
+                    params=params,
+                    timeout=20.0,
+                    follow_redirects=False,
+                    headers={"Accept-Encoding": "identity"},
+                ) as response:
+                    if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+                        raise SourceError("Compressed response refused; request uncompressed JSON")
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        body.extend(chunk)
+                        if len(body) > self.max_bytes:
+                            raise SourceError("Response exceeds the configured size limit")
+                    response = httpx.Response(
+                        response.status_code,
+                        headers=response.headers,
+                        content=bytes(body),
+                        request=response.request,
+                    )
             except httpx.TransportError as exc:
                 reason = f"Transport failure: {type(exc).__name__}"
             else:
                 if response.status_code == 429 or 500 <= response.status_code < 600:
                     reason = f"HTTP {response.status_code} after retries"
                     delay = self._retry_after(response)
+                    if response.status_code == 429:
+                        delay = max(delay, self.minimum_rate_limit_delay)
                 elif not response.is_success:
                     raise SourceError(f"HTTP {response.status_code}; check board ID and region")
                 else:

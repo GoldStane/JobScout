@@ -1,0 +1,30 @@
+{
+  "data": [
+    {
+      "slug": "graduate-cpp-engineer-example-one-100",
+      "company_name": "Example One",
+      "title": "Graduate C++ Engineer",
+      "description": "<p>Build Linux systems using C++ and Python.</p><script>untrusted()</script>",
+      "remote": true,
+      "url": "https://www.arbeitnow.com/jobs/companies/example-one/graduate-cpp-engineer-100",
+      "tags": ["Engineering"],
+      "job_types": ["Full Time"],
+      "location": "Berlin, Germany",
+      "created_at": 1791492012
+    },
+    {
+      "slug": "graduate-cpp-engineer-example-two-101",
+      "company_name": "Example Two",
+      "title": "Graduate C++ Engineer",
+      "description": "&lt;p&gt;Develop C++ software on Linux.&lt;/p&gt;",
+      "remote": false,
+      "url": "https://www.arbeitnow.co.uk/jobs/companies/example-two/graduate-cpp-engineer-101",
+      "tags": [],
+      "job_types": [],
+      "location": "London, United Kingdom",
+      "created_at": 1791492012
+    }
+  ],
+  "links": {"first": "https://www.arbeitnow.com/api/job-board-api?page=1", "last": null, "prev": null, "next": null},
+  "meta": {"current_page": 1, "per_page": 325}
+}

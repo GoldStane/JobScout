@@ -17,6 +17,8 @@ from pydantic import (
 NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 UTCDateTime = Annotated[AwareDatetime, AfterValidator(lambda value: value.astimezone(UTC))]
 Provider = Literal["greenhouse", "lever", "ashby", "smartrecruiters"]
+FeedProvider = Literal["arbeitnow", "himalayas"]
+FEED_PROVIDERS = {"arbeitnow", "himalayas"}
 
 
 class SourceConfig(BaseModel):
@@ -53,7 +55,7 @@ class Job(BaseModel):
     """A published posting; unknown facts remain null rather than inferred."""
 
     model_config = ConfigDict(extra="forbid")
-    source: Provider
+    source: Provider | FeedProvider
     source_job_id: NonEmpty
     company: NonEmpty
     company_identifier: NonEmpty
@@ -63,8 +65,14 @@ class Job(BaseModel):
     remote_type: Literal["remote", "hybrid", "on_site"] | None = None
     description_text: str = ""
     employment_type: str | None = None
-    application_url: HttpUrl
+    application_url: HttpUrl | None = None
     source_url: HttpUrl
+    listing_url: HttpUrl | None = None
+    attribution: str | None = None
+    attribution_url: HttpUrl | None = None
+    attribution_links: dict[str, HttpUrl] = Field(default_factory=dict)
+    salary_text: str | None = None
+    timezone_restrictions: list[str] | None = None
     posted_at: UTCDateTime | None = None
     fetched_at: UTCDateTime
     first_seen_at: UTCDateTime

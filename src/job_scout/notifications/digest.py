@@ -42,6 +42,8 @@ def build_digest(
     failures: list[str],
     successful_sources: int,
     maximum_matches: int,
+    identity_aliases: dict[str, list[str]] | None = None,
+    discovery_preview: bool = False,
 ) -> list[DigestPart]:
     """Formatting is deliberately plain text; job text is never parsed as markup."""
     date = now.astimezone(ZoneInfo(timezone)).date().isoformat()
@@ -60,7 +62,12 @@ def build_digest(
             else "\nNo sources were successfully checked; results are unavailable."
         )
     else:
-        coverage += f"\n{min(len(matches), maximum_matches)} new, previously undelivered match(es)."
+        label = (
+            "matching job(s); delivery history not checked"
+            if discovery_preview
+            else ("new, previously undelivered match(es)")
+        )
+        coverage += f"\n{min(len(matches), maximum_matches)} {label}."
         if len(matches) > maximum_matches:
             coverage += " Remaining matches can appear in a later digest."
     blocks.append((coverage, []))
@@ -76,10 +83,22 @@ def build_digest(
         # Include all material uncertainties, bounded to keep the original link intact.
         if match.unknowns:
             text += "\nUnknowns: " + clipped("; ".join(match.unknowns), 650)
-        text += f"\nApply: {job.application_url}"
+        if job.application_url is not None:
+            text += f"\nApply directly: {job.application_url}"
+        else:
+            text += f"\nView listing: {job.listing_url or job.source_url}"
+        if job.salary_text:
+            text += f"\nReported compensation: {clipped(job.salary_text, 160)}"
+        if job.timezone_restrictions:
+            text += "\nTimezone restrictions: " + clipped(", ".join(job.timezone_restrictions), 160)
+        attributions = dict(job.attribution_links)
+        if job.attribution:
+            attributions[job.attribution] = job.attribution_url
+        for name, url in attributions.items():
+            text += f"\nSource: {clipped(name, 100)}" + (f" — {url}" if url else "")
         if units(text) > MAX_UNITS - 100:
             raise ValueError("A job block exceeds the Telegram budget; shorten job fields")
-        blocks.append((text, [job_key(job)]))
+        blocks.append((text, (identity_aliases or {}).get(job_key(job), [job_key(job)])))
     chunks: list[DigestPart] = []
     text, keys = "", []
     for block, block_keys in blocks:

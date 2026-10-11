@@ -1,6 +1,6 @@
-# Cloud deployment (Milestone 6)
+# Cloud deployment (unified daily run, M3–M4)
 
-GitHub Actions starts a temporary Python runner, collects employer APIs, updates
+GitHub Actions starts a temporary Python runner, discovers feed jobs and monitors employer APIs, updates
 persistent PostgreSQL, and calls Telegram. The runner then stops. Telegram does
 not run JobScout itself. Your laptop does not need to remain online.
 
@@ -15,7 +15,7 @@ Keep `.env`, private `config/companies.yaml`, private `config/profile.yaml`, and
 `data/` out of the commit. They are ignored; do not force-add them.
 
 In GitHub, open **Actions → Tests** and wait for a green run. This checks lint,
-formatting, the offline test suite, and four PostgreSQL integration tests against
+formatting, the offline test suite, and PostgreSQL integration tests against
 a disposable PostgreSQL 17 service. It uses no production secrets and sends no
 Telegram messages. The PostgreSQL tests skip locally unless TEST_POSTGRES_URL
 points to a localhost database named jobscout_test.
@@ -50,7 +50,25 @@ the first cloud digest. Retain your SQLite database. There is no history import
 utility in this milestone. To share history for future local/cloud runs, use the
 same cloud DATABASE_URL and Telegram chat ID locally after setup.
 
-## 3. Add five repository secrets
+Himalayas can be enabled through `providers.himalayas.enabled: true` in
+`JOBSCOUT_DISCOVERY_YAML`; use `mode: search` for profile-driven role queries.
+See [the provider guide](job-discovery.md#himalayas-m4). It needs no additional
+credential, and stays disabled when the optional configuration is absent.
+
+## Discovery upgrade (schema 4)
+
+Before using this release against an existing database, back it up and run mode
+**migrate**. The database registry is now canonical. Existing companies YAML seeds
+missing registrations on the first normal run; later YAML changes do not override
+registered sources. Use the [discovery guide](discovery.md) to add, review, enable,
+or disable sources using the same cloud DATABASE_URL from your local CLI.
+`JOBSCOUT_COMPANIES_YAML` is optional even on an empty registry: daily runs now
+include Arbeitnow discovery. Optional `JOBSCOUT_DISCOVERY_YAML` supplies feed and
+registration budgets using `config/discovery.example.yaml`. Defaults require no
+API key. Schema 4 adds only the durable `job_links` table; the migration preserves
+jobs, source registrations and delivery history. Upgrade before enabling sends.
+
+## 3. Add repository secrets
 
 Open **Settings → Secrets and variables → Actions → Secrets → New repository
 secret**. Add each name exactly:
@@ -60,13 +78,16 @@ secret**. Add each name exactly:
 - `TELEGRAM_CHAT_ID`: your numeric destination chat ID, including a minus sign
   if applicable. Start the bot in Telegram first; see the
   [Telegram setup guide](telegram-setup.md) if these are not ready.
-- `JOBSCOUT_COMPANIES_YAML`: paste the entire contents of your working private
-  `config/companies.yaml`, with at least one enabled, verified board.
+- `JOBSCOUT_COMPANIES_YAML` (optional): employer board seeds; omit for feed-only
+  discovery or database-registered boards.
+- `JOBSCOUT_DISCOVERY_YAML` (optional): feed and registration settings. Omit for
+  bounded defaults. For ATS-only runs, disable both providers with
+  `providers.arbeitnow.enabled: false` and `providers.himalayas.enabled: false`.
 - `JOBSCOUT_PROFILE_YAML`: paste the entire contents of your working private
   `config/profile.yaml`.
 
 YAML secrets are multiline text, not file paths or base64. Preserve indentation.
-Use secrets, not repository variables, for all five values. When you change a
+Use secrets, not repository variables, for these values. When you change a
 local YAML file later, update the corresponding secret too; it is a separate copy.
 
 The workflow materializes temporary configuration files with private permissions
@@ -80,15 +101,15 @@ Open **Actions → Daily search → Run workflow**. Select the default branch, c
 mode **initialize**, leave **retry_uncertain** unchecked, and run it. Wait for a
 green result. This creates the schema in the DATABASE_URL database.
 
-For an existing revision-1 JobScout cloud database, back it up first and use mode
+For an existing revision-1, revision-2 or revision-3 JobScout cloud database, back it up first and use mode
 **migrate** instead. Initialization is safe to repeat but does not silently upgrade
 old tables. Do not run migrations against unrelated databases.
 
 ## 5. Preview, then send manually
 
 Run Daily search again with mode **preview** (the default). This fetches public
-boards and reads the cloud database but sends no Telegram messages and writes no
-jobs or delivery success. A successful summary includes `dry_run`. Cloud previews
+feeds/boards and reads the cloud database but sends no Telegram messages and writes
+no jobs, identity links, registrations or delivery success. A successful summary includes `dry_run`. Cloud previews
 intentionally omit the message body from logs.
 
 To inspect the actual preview privately, activate your local virtual environment,
@@ -97,7 +118,7 @@ ID into your local environment, then run:
 
 ```sh
 python -m pip install -e '.[dev,postgres]'
-job-scout run --config config/companies.yaml --profile config/profile.yaml --dry-run
+job-scout run --profile config/profile.yaml --dry-run
 ```
 
 `.env` is not loaded automatically; follow the environment-loading instructions
@@ -136,9 +157,9 @@ runs while the variable is disabled (scheduled workflow jobs are skipped).
 
 The workflow has three daily triggers in **Europe/Rome**:
 
-- **08:17**: morning run.
-- **10:47**: catch-up if the earlier run was missed or definitely failed.
-- **17:17**: a second catch-up opportunity.
+- **09:00**: morning run.
+- **15:00**: catch-up if the earlier run was missed or definitely failed.
+- **21:00**: a second catch-up opportunity.
 
 GitHub's timezone-aware schedule follows Rome daylight saving time. The profile's
 `digest.timezone` defines the digest date; keep it consistent with the workflow.

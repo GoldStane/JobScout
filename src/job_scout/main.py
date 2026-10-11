@@ -17,6 +17,12 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from job_scout.collection import collect
 from job_scout.config import load_registry
+from job_scout.discovery import batch as discovery_batch
+from job_scout.discovery import cli as discovery_cli
+from job_scout.discovery import jobs_cli
+from job_scout.discovery.detect import DiscoveryError
+from job_scout.discovery.registry import Registry
+from job_scout.discovery.settings import load_settings
 from job_scout.matching.profile import Profile, load_profile
 from job_scout.matching.scoring import rank_jobs
 from job_scout.models import CollectionReport, SourceRegistry, utc_now
@@ -51,7 +57,7 @@ def _registry(path: Path, parser: argparse.ArgumentParser) -> SourceRegistry:
         )
     if not any(source.enabled for source in registry.sources):
         logging.getLogger(__name__).warning(
-            "No enabled sources; replace placeholders and enable boards"
+            "No enabled sources in YAML; database registrations may still be active"
         )
     return registry
 
@@ -101,11 +107,27 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
             print(json.dumps(DeliveryRepository(engine).status(recipient_key(chat_id)), indent=2))
         elif args.command == "run":
             assert profile is not None
+            try:
+                discovery_settings = load_settings(args.discovery_config)
+            except (OSError, ValueError, yaml.YAMLError) as exc:
+                parser.exit(2, f"Cannot load discovery configuration ({type(exc).__name__}).\n")
+            if args.no_discovery:
+                discovery_settings.providers.arbeitnow.enabled = False
+                discovery_settings.providers.himalayas.enabled = False
             if args.limit is not None:
                 profile.digest.maximum_matches = args.limit
             if args.min_score is not None:
                 profile.digest.minimum_score = args.min_score
-            registry = _registry(args.config, parser)
+            seed_path = args.config
+            if seed_path is None and Path("config/companies.yaml").exists():
+                seed_path = Path("config/companies.yaml")
+            seeds = (
+                _registry(seed_path, parser)
+                if seed_path and not args.registry_only
+                else (SourceRegistry(sources=[]))
+            )
+            registrations = Registry(engine)
+            registry = registrations.active(seeds)
 
             async def execute():
                 chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip() or None
@@ -121,11 +143,22 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
                         logging.getLogger(__name__).warning(
                             "No TELEGRAM_CHAT_ID: preview treats all matching jobs as undelivered"
                         )
+                    if not args.dry_run:
+                        registrations.seed(seeds)
+
+                    async def discover_jobs():
+                        result, _ = await jobs_cli.fetch_providers(discovery_settings, profile)
+                        return result
+
                     return await run_digest(
                         repository=repository,
                         deliveries=DeliveryRepository(engine),
                         profile=profile,
                         collect=lambda: _collect(registry),
+                        discover=discover_jobs,
+                        register=lambda result: jobs_cli.register_result(
+                            result, engine, discovery_settings, dry_run=args.dry_run
+                        ),
                         chat_id=chat_id,
                         sender=sender,
                         now=utc_now(),
@@ -192,7 +225,14 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
                 )
             )
         else:
-            report = asyncio.run(_collect(_registry(args.config, parser)))
+            seeds = (
+                _registry(args.config, parser)
+                if not args.registry_only
+                else SourceRegistry(sources=[])
+            )
+            registrations = Registry(engine)
+            registrations.seed(seeds)
+            report = asyncio.run(_collect(registrations.active()))
             counts = repository.ingest(report)
             print(json.dumps(asdict(counts), indent=2))
             return 1 if report.failed else 0
@@ -215,12 +255,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     ]:
         command = subcommands.add_parser(name, help=help_text)
         command.add_argument("--config", type=Path, default=Path("config/companies.yaml"))
+        if name == "ingest":
+            command.add_argument(
+                "--registry-only",
+                action="store_true",
+                help="Use registered database sources without YAML seeds",
+            )
+    discovery_cli.add_commands(subcommands)
+    discovery_batch.add_command(subcommands)
+    jobs_cli.add_command(subcommands)
     subcommands.add_parser("db-init", help="Initialize the database selected by DATABASE_URL")
     subcommands.add_parser("db-migrate", help="Migrate an existing database to the current schema")
     subcommands.add_parser("delivery-status", help="Inspect Telegram delivery outcomes")
     subcommands.add_parser("telegram-chats", help="Read private chat IDs from recent bot updates")
     run = subcommands.add_parser("run", help="Collect, match, and send or preview the daily digest")
-    run.add_argument("--config", type=Path, default=Path("config/companies.yaml"))
+    run.add_argument(
+        "--registry-only",
+        action="store_true",
+        help="Use registered database sources without YAML seeds",
+    )
+    run.add_argument("--config", type=Path, help="Optional employer YAML seeds")
+    run.add_argument("--discovery-config", type=Path, help="Discovery and ATS validation budgets")
+    run.add_argument(
+        "--no-discovery", action="store_true", help="Monitor registered ATS boards only"
+    )
     run.add_argument("--profile", type=Path, default=Path("config/profile.yaml"))
     run.add_argument("--track")
     run.add_argument("--limit", type=int)
@@ -284,11 +342,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    # HTTP request URLs add noise and can contain credentials (e.g. Telegram tokens).
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     if args.command == "collect":
         report = asyncio.run(_collect(_registry(args.config, parser)))
         print(report.model_dump_json(indent=2))
         return 1 if report.failed else 0
     try:
+        if args.command == "discover-jobs":
+            return jobs_cli.execute(args, parser)
+        if args.command == "discover-sources":
+            return discovery_batch.execute(args)
+        if args.command == "company":
+            return discovery_cli.execute(args)
         if args.command == "telegram-chats":
 
             async def discover():
@@ -304,6 +370,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps({"private_chat_ids": asyncio.run(discover())}))
             return 0
         return _database_command(args, parser)
+    except DiscoveryError as exc:
+        parser.exit(2, f"{exc}\n")
     except (DeliveryError, DeliveryBusy) as exc:
         parser.exit(4, f"{exc}\n")
     except SchemaError as exc:

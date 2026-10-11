@@ -9,7 +9,7 @@ from job_scout.storage.database import initialize_database, open_database
 def test_database_commands(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/cli.db")
     for command, expected in [
-        ("db-init", {"schema_version": 2, "initialized": True}),
+        ("db-init", {"schema_version": 4, "initialized": True}),
         ("jobs", []),
         ("source-health", []),
     ]:

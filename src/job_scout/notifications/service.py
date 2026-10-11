@@ -8,6 +8,9 @@ from datetime import datetime
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
+from job_scout.deduplicate import reconcile_jobs
+from job_scout.discovery.base import DiscoveryBatch, DiscoveryResult
+from job_scout.discovery.registration import RegistrationReport
 from job_scout.matching.profile import Profile
 from job_scout.matching.scoring import rank_jobs
 from job_scout.models import CollectionReport
@@ -36,6 +39,9 @@ async def run_digest(
     deliveries: DeliveryRepository,
     profile: Profile,
     collect: Callable[[], Awaitable[CollectionReport]],
+    discover: Callable[[], Awaitable[DiscoveryResult | DiscoveryBatch | None]] | None = None,
+    register: Callable[[DiscoveryResult | DiscoveryBatch], Awaitable[RegistrationReport]]
+    | None = None,
     chat_id: str | None,
     sender: Sender | None,
     now: datetime,
@@ -54,47 +60,74 @@ async def run_digest(
             return RunResult([], "already_sent")
         saved = None
     report = None
+    discovery = None
+    registration = None
+    discoveries = []
     if saved is None:
         # No delivery lease during slow source collection. Recheck after acquiring it.
-        report = await collect()
-        if not report.sources:
+        if discover is not None:
+            report, discovery = await asyncio.gather(collect(), discover())
+        else:
+            report = await collect()
+        discoveries = (
+            discovery.results
+            if isinstance(discovery, DiscoveryBatch)
+            else [discovery]
+            if discovery is not None
+            else []
+        )
+        if not report.sources and not discoveries:
             raise DeliveryError("No enabled sources; configure at least one source before run")
         if not dry_run:
             repository.ingest(report)
+            for result in discoveries:
+                repository.ingest_discovery(result)
+        if discovery is not None and register is not None:
+            registration = await register(discovery)
     failures = (
         [f"{r.config.company} ({r.config.source}): {r.error}" for r in report.sources if r.error]
         if report
         else []
     )
+    for result in discoveries:
+        if result.error:
+            failures.append(f"{result.provider}: {result.error}")
+        if result.skipped:
+            failures.append(f"{result.provider}: {result.skipped} invalid postings skipped")
+    if registration is not None and registration.failed:
+        failures.append("ATS registration incomplete; see discover-jobs or company candidates")
+
+    reconciled = None
+    if report is not None:
+        fresh = [job for source in report.sources if source.error is None for job in source.jobs]
+        if discovery is not None:
+            fresh.extend(discovery.jobs)
+        history = repository.jobs(include_closed=True)
+        reconciled = reconcile_jobs(fresh, history, repository.job_links())
+        if not dry_run:
+            repository.save_job_links(reconciled.new_links)
+            # Use authoritative persisted bindings if another writer linked the same feed job.
+            reconciled = reconcile_jobs(fresh, history, repository.job_links())
 
     def preview_parts():
         assert report is not None
+        assert reconciled is not None
         delivered = deliveries.delivered_keys(recipient)
-        # Only freshly observed jobs from successful sources, never stale/disabled boards.
-        jobs = [job for source in report.sources if source.error is None for job in source.jobs]
-        # Fresh source records reset first_seen_at; retain stored discovery dates
-        # for consistent sorting in both read-only previews and actual delivery.
-        first_seen = {
-            job_key(job): job.first_seen_at for job in repository.jobs(include_closed=True)
-        }
-        jobs = [
-            job.model_copy(
-                update={"first_seen_at": first_seen.get(job_key(job), job.first_seen_at)}
-            )
-            for job in jobs
-        ]
         matches = [
             match
-            for match in rank_jobs(jobs, profile)
-            if job_key(match.job) not in delivered and match.score >= profile.digest.minimum_score
+            for match in rank_jobs(reconciled.jobs, profile)
+            if not delivered.intersection(reconciled.aliases[job_key(match.job)])
+            and match.score >= profile.digest.minimum_score
         ]
         return build_digest(
             matches,
             now=now,
             timezone=profile.digest.timezone,
             failures=failures,
-            successful_sources=sum(source.error is None for source in report.sources),
+            successful_sources=sum(source.error is None for source in report.sources)
+            + sum(result.pages > 0 for result in discoveries),
             maximum_matches=profile.digest.maximum_matches,
+            identity_aliases=reconciled.aliases,
         )
 
     if dry_run:

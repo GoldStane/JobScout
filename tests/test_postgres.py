@@ -135,3 +135,67 @@ def test_postgres_migration_preserves_records(postgres):
     migrate_database(postgres)
     assert len(Repository(postgres).jobs()) == 1
     assert DeliveryRepository(postgres).status(recipient_key("123")) == []
+
+
+def test_postgres_discovery_registration_and_disabled_seed(postgres):
+    from job_scout.discovery.detect import detect
+    from job_scout.discovery.registry import Registry
+    from job_scout.discovery.validate import Validation
+    from job_scout.models import SourceRegistry
+
+    registry = Registry(postgres)
+    candidate = detect("https://jobs.lever.co/example")
+    saved = registry.record(candidate, Validation("verified", "Verified", True))
+    assert registry.record(candidate, Validation("verified", "Verified", True))["id"] == saved["id"]
+    registry.disable(saved["source_id"])
+    registry.seed(SourceRegistry(sources=[candidate.config.model_copy(update={"enabled": True})]))
+    assert registry.active().sources == []
+    registry.approve(saved["id"])
+    assert len(registry.active().sources) == 1
+
+
+def test_postgres_actual_revision_two_upgrade(postgres):
+    from job_scout.discovery.registry import Registry
+    from job_scout.storage.database import CandidateRow, CompanyRow
+
+    Repository(postgres).ingest(snapshot())
+    deliveries = DeliveryRepository(postgres)
+    key = recipient_key("123")
+    owner = deliveries.acquire(key)
+    deliveries.prepare(key, owner, "2026-10-09", "Europe/Rome", [DigestPart("Sent", ["old"])])
+    part = deliveries.existing(key, "2026-10-09").parts[0]
+    deliveries.begin_attempt(key, owner, part.id)
+    deliveries.finish_attempt(key, owner, part.id, message_id=123)
+    deliveries.release(key, owner)
+    with postgres.begin() as connection:
+        CandidateRow.__table__.drop(connection)
+        for column in [
+            "company_id",
+            "board_url",
+            "registration_origin",
+            "registration_status",
+            "validated_at",
+            "validation_error",
+        ]:
+            connection.execute(text(f"ALTER TABLE sources DROP COLUMN {column}"))
+        CompanyRow.__table__.drop(connection)
+        connection.execute(SchemaVersion.__table__.update().values(version=2))
+    migrate_database(postgres)
+    assert len(Repository(postgres).jobs()) == 1
+    assert Registry(postgres).sources()[0]["status"] == "unregistered"
+    assert DeliveryRepository(postgres).delivered_keys(key) == {"old"}
+
+
+def test_postgres_schema_three_upgrade_and_immutable_job_links(postgres):
+    from job_scout.storage.database import JobLinkRow
+
+    repo = Repository(postgres)
+    repo.ingest(snapshot())
+    with postgres.begin() as connection:
+        JobLinkRow.__table__.drop(connection)
+        connection.execute(SchemaVersion.__table__.update().values(version=3))
+    migrate_database(postgres)
+    assert len(repo.jobs()) == 1
+    repo.save_job_links({"a" * 64: "b" * 64})
+    repo.save_job_links({"a" * 64: "c" * 64})
+    assert repo.job_links() == {"a" * 64: "b" * 64}

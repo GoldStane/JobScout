@@ -8,8 +8,9 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from job_scout.models import CollectionReport, Job, SourceResult
-from job_scout.storage.database import JobRow, SourceRow, check_schema
+from job_scout.discovery.base import DiscoveryResult
+from job_scout.models import CollectionReport, Job, SourceResult, utc_now
+from job_scout.storage.database import JobLinkRow, JobRow, SourceRow, check_schema
 
 
 @dataclass
@@ -110,38 +111,9 @@ class Repository:
                 for row in session.scalars(select(JobRow).where(JobRow.source_id == source.id))
             }
             for job in result.jobs:
-                data = job.model_dump(
-                    mode="json", exclude={"first_seen_at", "last_seen_at", "status"}
+                self._upsert_job(
+                    session, source.id, job, existing.pop(job.source_job_id, None), counts
                 )
-                row = existing.pop(job.source_job_id, None)
-                if row is None:
-                    session.add(
-                        JobRow(
-                            source_id=source.id,
-                            source_job_id=job.source_job_id,
-                            data=data,
-                            first_seen_at=job.fetched_at,
-                            last_seen_at=job.fetched_at,
-                            last_changed_at=job.fetched_at,
-                            status="open",
-                            missing_checks=0,
-                        )
-                    )
-                    counts.inserted += 1
-                else:
-                    previous = {
-                        key: value for key, value in row.data.items() if key != "fetched_at"
-                    }
-                    current = {key: value for key, value in data.items() if key != "fetched_at"}
-                    if previous != current or row.status != "open":
-                        counts.updated += 1
-                        row.last_changed_at = job.fetched_at
-                    else:
-                        counts.unchanged += 1
-                    row.data = data
-                    row.last_seen_at = job.fetched_at
-                    row.status = "open"
-                    row.missing_checks = 0
             for row in existing.values():
                 if row.status == "closed":
                     continue
@@ -150,6 +122,102 @@ class Repository:
                     row.status = "closed"
                     row.last_changed_at = result.completed_at
                     counts.closed += 1
+        return counts
+
+    @staticmethod
+    def _upsert_job(session, source_id: int, job: Job, row: JobRow | None, counts) -> None:
+        data = job.model_dump(mode="json", exclude={"first_seen_at", "last_seen_at", "status"})
+        if row is None:
+            session.add(
+                JobRow(
+                    source_id=source_id,
+                    source_job_id=job.source_job_id,
+                    data=data,
+                    first_seen_at=job.fetched_at,
+                    last_seen_at=job.fetched_at,
+                    last_changed_at=job.fetched_at,
+                    status="open",
+                    missing_checks=0,
+                )
+            )
+            counts.inserted += 1
+        else:
+            previous = {key: value for key, value in row.data.items() if key != "fetched_at"}
+            current = {key: value for key, value in data.items() if key != "fetched_at"}
+            if previous != current or row.status != "open":
+                counts.updated += 1
+                row.last_changed_at = job.fetched_at
+            else:
+                counts.unchanged += 1
+            row.data = data
+            row.last_seen_at = job.fetched_at
+            row.status = "open"
+            row.missing_checks = 0
+
+    def ingest_discovery(self, result: DiscoveryResult) -> IngestCounts:
+        """Upsert observations, never treat a bounded feed as a full board snapshot.
+
+        The existing source FK points to a feed namespace (not an employer or
+        registered ATS board). No company or candidate registration is created.
+        """
+        if result.completed_at < result.attempted_at:
+            raise ValueError("Discovery completion precedes attempt")
+        seen = set()
+        for job in result.jobs:
+            if (
+                job.source != result.provider
+                or job.company_identifier != "feed"
+                or job.source_region != "global"
+                or job.status != "open"
+                or not result.attempted_at <= job.fetched_at <= result.completed_at
+                or job.source_job_id in seen
+            ):
+                raise ValueError("Invalid discovery identity, timestamp or duplicate")
+            seen.add(job.source_job_id)
+        counts = IngestCounts()
+        with Session(self.engine) as session, session.begin():
+            insert = sqlite_insert if self.engine.dialect.name == "sqlite" else postgres_insert
+            session.execute(
+                insert(SourceRow)
+                .values(
+                    provider=result.provider,
+                    region="global",
+                    board_id="feed",
+                    company=f"{result.provider.title()} public feed",
+                    registration_origin="global_discovery",
+                    registration_status="feed",
+                    consecutive_failures=0,
+                )
+                .on_conflict_do_nothing(index_elements=["provider", "region", "board_id"])
+            )
+            source = session.scalars(
+                select(SourceRow)
+                .where(
+                    SourceRow.provider == result.provider,
+                    SourceRow.region == "global",
+                    SourceRow.board_id == "feed",
+                )
+                .with_for_update()
+            ).one()
+            if source.last_attempt is not None and result.attempted_at <= source.last_attempt:
+                counts.ignored_snapshots = 1
+                return counts
+            source.last_attempt = result.attempted_at
+            source.last_error = result.error or (
+                f"Skipped {result.skipped} invalid postings" if result.skipped else None
+            )
+            if source.last_error:
+                source.consecutive_failures += 1
+                counts.failed_sources = 1
+            else:
+                source.last_success = result.completed_at
+                source.consecutive_failures = 0
+            existing = {
+                row.source_job_id: row
+                for row in session.scalars(select(JobRow).where(JobRow.source_id == source.id))
+            }
+            for job in result.jobs:
+                self._upsert_job(session, source.id, job, existing.get(job.source_job_id), counts)
         return counts
 
     def jobs(self, *, include_closed: bool = False) -> list[Job]:
@@ -168,6 +236,25 @@ class Repository:
                 )
                 for row in session.scalars(statement)
             ]
+
+    def job_links(self) -> dict[str, str]:
+        with Session(self.engine) as session:
+            return {row.feed_key: row.publisher_key for row in session.scalars(select(JobLinkRow))}
+
+    def save_job_links(self, links: dict[str, str]) -> None:
+        insert = sqlite_insert if self.engine.dialect.name == "sqlite" else postgres_insert
+        with Session(self.engine) as session, session.begin():
+            for feed, publisher in links.items():
+                session.execute(
+                    insert(JobLinkRow)
+                    .values(
+                        feed_key=feed,
+                        publisher_key=publisher,
+                        verified_at=utc_now(),
+                        method="exact_ats_url_and_title",
+                    )
+                    .on_conflict_do_nothing(index_elements=["feed_key"])
+                )
 
     def source_health(self) -> list[dict]:
         with Session(self.engine) as session:

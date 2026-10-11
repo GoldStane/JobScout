@@ -172,3 +172,25 @@ def test_additional_restricted_to_manual_delivery(environment, monkeypatch, even
     monkeypatch.setenv("JOBSCOUT_MODE", mode)
     monkeypatch.setenv("JOBSCOUT_ADDITIONAL", "true")
     assert cloud.main() == 2
+
+
+def test_cloud_empty_employers_and_optional_discovery_settings(environment, monkeypatch):
+    monkeypatch.delenv("JOBSCOUT_COMPANIES_YAML")
+    monkeypatch.setenv("JOBSCOUT_DISCOVERY_YAML", "providers:\n  arbeitnow:\n    max_pages: 1\n")
+
+    def invoke(args):
+        companies = Path(args[args.index("--config") + 1])
+        discovery = Path(args[args.index("--discovery-config") + 1])
+        assert yaml.safe_load(companies.read_text()) == {"sources": []}
+        assert yaml.safe_load(discovery.read_text())["providers"]["arbeitnow"]["max_pages"] == 1
+        assert discovery.stat().st_mode & 0o777 == 0o600
+        return 0
+
+    monkeypatch.setattr(cloud, "invoke", invoke)
+    assert cloud.main() == 0
+
+
+def test_invalid_discovery_secret_is_private(environment, monkeypatch, capsys):
+    monkeypatch.setenv("JOBSCOUT_DISCOVERY_YAML", "secret: do-not-echo-this")
+    assert cloud.main() == 2
+    assert "do-not-echo-this" not in capsys.readouterr().out

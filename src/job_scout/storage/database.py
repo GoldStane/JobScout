@@ -16,12 +16,13 @@ from sqlalchemy import (
     event,
     inspect,
     select,
+    text,
 )
 from sqlalchemy.engine import Connection, Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 DEFAULT_DATABASE_URL = "sqlite:///data/jobscout.db"
 
 
@@ -61,6 +62,32 @@ class SchemaVersion(Base):
     __table_args__ = (CheckConstraint("id = 1", name="single_schema_version"),)
 
 
+class CompanyRow(Base):
+    __tablename__ = "companies"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    identity: Mapped[str] = mapped_column(String(255), unique=True)
+    display_name: Mapped[str]
+    official_website: Mapped[str | None]
+    aliases: Mapped[list] = mapped_column(JSON, default=list)
+    discovered_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
+class CandidateRow(Base):
+    __tablename__ = "discovery_candidates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    identity: Mapped[str] = mapped_column(String(64), unique=True)
+    url: Mapped[str]
+    config: Mapped[dict | None] = mapped_column(JSON)
+    method: Mapped[str] = mapped_column(default="manual_url")
+    discovered_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    validated_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    state: Mapped[str] = mapped_column(String(32), default="discovered")
+    reason: Mapped[str]
+    endpoint_valid: Mapped[bool] = mapped_column(default=False)
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("sources.id"))
+    audit: Mapped[list] = mapped_column(JSON, default=list)
+
+
 class SourceRow(Base):
     __tablename__ = "sources"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -68,6 +95,16 @@ class SourceRow(Base):
     region: Mapped[str] = mapped_column(String(16))
     board_id: Mapped[str] = mapped_column(String(200))
     company: Mapped[str]
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"))
+    board_url: Mapped[str | None]
+    registration_origin: Mapped[str] = mapped_column(
+        String(32), default="legacy", server_default="legacy"
+    )
+    registration_status: Mapped[str] = mapped_column(
+        String(32), default="unregistered", server_default="unregistered"
+    )
+    validated_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    validation_error: Mapped[str | None]
     last_attempt: Mapped[datetime | None] = mapped_column(UTCDateTime())
     last_success: Mapped[datetime | None] = mapped_column(UTCDateTime())
     last_error: Mapped[str | None]
@@ -92,6 +129,16 @@ class JobRow(Base):
         CheckConstraint("status IN ('open', 'closed')", name="valid_job_status"),
         CheckConstraint("missing_checks >= 0", name="nonnegative_missing_checks"),
     )
+
+
+class JobLinkRow(Base):
+    """Verified feed-to-publisher equivalence; source records are never destroyed."""
+
+    __tablename__ = "job_links"
+    feed_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    publisher_key: Mapped[str] = mapped_column(String(64), index=True)
+    verified_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    method: Mapped[str] = mapped_column(default="exact_ats_url_and_title")
 
 
 class DigestRow(Base):
@@ -192,7 +239,7 @@ def initialize_database(engine: Engine) -> None:
 
 
 def migrate_database(engine: Engine) -> None:
-    """Explicit additive revision 1 -> 2 migration; preserve all jobs and sources."""
+    """Additive revisions 1/2/3 -> 4; preserve jobs, delivery history and source IDs."""
     with engine.begin() as connection:
         tables = set(inspect(connection).get_table_names())
         if not {"schema_version", "sources", "jobs"}.issubset(tables):
@@ -203,10 +250,31 @@ def migrate_database(engine: Engine) -> None:
         if version == SCHEMA_VERSION:
             _check_schema(connection)
             return
-        if version != 1:
+        if version not in {1, 2, 3}:
             raise SchemaError("Unsupported schema version; cannot migrate automatically")
-        for table in [DigestRow.__table__, NotificationRow.__table__, DeliveryLock.__table__]:
-            table.create(connection, checkfirst=True)
+        if version == 1:
+            for table in [DigestRow.__table__, NotificationRow.__table__, DeliveryLock.__table__]:
+                table.create(connection, checkfirst=True)
+        CompanyRow.__table__.create(connection, checkfirst=True)
+        # Nullable/additive columns work on SQLite and PostgreSQL without rebuilding jobs.
+        existing = {column["name"] for column in inspect(connection).get_columns("sources")}
+        for name, definition in {
+            "company_id": "INTEGER REFERENCES companies(id)",
+            "board_url": "TEXT",
+            "registration_origin": "VARCHAR(32) NOT NULL DEFAULT 'legacy'",
+            "registration_status": "VARCHAR(32) NOT NULL DEFAULT 'unregistered'",
+            "validated_at": "TIMESTAMP WITH TIME ZONE"
+            if connection.dialect.name == "postgresql"
+            else "DATETIME",
+            "validation_error": "TEXT",
+        }.items():
+            if name not in existing:
+                connection.execute(text(f"ALTER TABLE sources ADD COLUMN {name} {definition}"))
+        CandidateRow.__table__.create(connection, checkfirst=True)
+        JobLinkRow.__table__.create(connection, checkfirst=True)
         connection.execute(
-            SchemaVersion.__table__.update().where(SchemaVersion.id == 1).values(version=2)
+            SchemaVersion.__table__.update()
+            .where(SchemaVersion.id == 1)
+            .values(version=SCHEMA_VERSION)
         )
+        _check_schema(connection)

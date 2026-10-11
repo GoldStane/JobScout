@@ -1,0 +1,9 @@
+{
+  "greenhouse": {
+    "jobs": [{"id": 1, "title": "Graduate Engineer", "absolute_url": "https://boards.greenhouse.io/example/jobs/1"}]
+  },
+  "lever": [{"id": "1", "text": "Engineering Intern", "hostedUrl": "https://jobs.lever.co/example/1", "applyUrl": "https://jobs.lever.co/example/1/apply"}],
+  "ashby": {
+    "jobs": [{"id": "1", "title": "Graduate Engineer", "jobUrl": "https://jobs.ashbyhq.com/example/1", "applyUrl": "https://jobs.ashbyhq.com/example/1/application"}]
+  }
+}

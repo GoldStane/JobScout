@@ -232,3 +232,6 @@ data/
 *.db-*
 *.sqlite-*
 *.sqlite3-*
+
+# Private discovery input (use private/ for additional lists)
+/employers.txt

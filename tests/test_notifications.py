@@ -133,7 +133,7 @@ def test_digest_contains_required_fields_and_literal_markup(setup):
         "Type:",
         "Why:",
         "Unknowns:",
-        "Apply: https://example.org/0/apply?a=1&b=2",
+        "Apply directly: https://example.org/0/apply?a=1&b=2",
     ]:
         assert expected in text
     assert all(units(text) <= 4000 for text in result.messages)
@@ -313,7 +313,7 @@ def test_migration_preserves_existing_jobs(setup):
     assert len(Repository(engine).jobs()) == 1
     assert DeliveryRepository(engine).status(recipient_key("123")) == []
     with Session(engine) as session:
-        assert session.scalar(select(SchemaVersion.version)) == 2
+        assert session.scalar(select(SchemaVersion.version)) == 4
 
 
 def test_additional_digest_keeps_history_and_sends_only_new_jobs(setup):

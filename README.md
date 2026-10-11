@@ -1,12 +1,132 @@
 # JobScout
 
-A personal job discovery and explainable matching service for internship,
-graduate, and entry-level opportunities worldwide.
+A configurable job discovery and explainable matching service for opportunities
+worldwide, guided by a private candidate profile.
 
-**Status: Milestone 6 — deployment implemented.** Collect, persist, match, and
-deliver jobs through Telegram, locally or through scheduled GitHub Actions.
+**Status: M4 — Himalayas discovery added to the unified daily run.**
+Discover, persist and rank jobs without preconfigured companies. Existing ATS
+monitoring and Telegram delivery remain available locally or through GitHub Actions.
 Follow the [cloud deployment guide](docs/deployment.md) to configure your database,
 secrets, and opt-in schedule; cloud services are not provisioned automatically.
+
+
+## Profile-independent design
+
+JobScout's product objective is to support any profession, educational background
+and career stage. Roles, skills, experience goals, locations, eligibility facts,
+ranking priorities and digest settings belong in each user's private profile.
+No particular major, study year, graduation date, residence or career preference
+is a product requirement. Education and enrollment may be unknown or irrelevant.
+Committed examples must be fictional and must not describe an actual candidate.
+
+**Current limitation:** the matcher still contains early-career assumptions,
+including a restricted career-level vocabulary and automatic senior-title
+exclusions. Full support for experienced and other profiles requires changes to
+the profile schema and matching rules; these documentation changes do not add
+that runtime support. The requirements in `AGENTS.md` prohibit carrying those
+assumptions forward as universal rules. Provider coverage also varies by region
+and profession.
+
+## Discover jobs with zero preconfigured companies
+
+After the local installation below, initialize a new database and run:
+
+```sh
+job-scout db-init
+job-scout discover-jobs --profile config/profile.example.yaml
+job-scout match --profile config/profile.example.yaml
+```
+
+Use `db-migrate` instead of `db-init` for an existing older schema. No employer
+list, company YAML, board ID or API key is required. Supply your private profile
+for personal interests, skills, career tracks and locations. Optional budgets
+are in [config/discovery.example.yaml](config/discovery.example.yaml).
+`discover-jobs --dry-run` fetches and previews without database writes or sends.
+
+Discovery reuses the existing job repository and matcher. Its digest preview
+uses **View listing** for aggregator URLs and credits each provider; it never invents
+a direct application link. Read the [discovery guide](docs/job-discovery.md) for
+setup, limits, terms, storage compatibility and expected output.
+
+When a posting description contains a recognized ATS link, discovery now validates
+and registers that board automatically for subsequent monitoring. Jobs without
+ATS links remain usable. Registration has separate request/runtime budgets and
+preserves disabled/rejected sources; `--dry-run` registers nothing.
+
+`run` now discovers jobs and monitors registered ATS boards in the same daily
+flow, including when the employer registry is empty. It reconciles verified
+feed/ATS posting identities before scoring and delivery. Newly registered boards
+join monitoring on the next run. Use `--no-discovery` for ATS-only operation;
+`--registry-only` skips employer YAML seeds but still runs global discovery.
+
+`discover-jobs` defaults to readable terminal output: run counts, ATS results,
+and numbered matches with normal Unicode and separate reasons/uncertainties.
+Use `--limit 5` for a shorter preview or `--format json` for scripts. JSON includes
+structured `matches` as well as the existing digest preview. Standalone discovery
+never sends messages and does not claim its matches are previously undelivered.
+Routine HTTP request logs are suppressed.
+
+Existing databases must be upgraded with `job-scout db-migrate` before this release.
+Schema 4 adds only `job_links`; it preserves all jobs, boards and delivery history.
+
+## Optional: add Himalayas remote jobs
+
+M3 is implemented: `run` combines global discovery, ATS monitoring, shared matching,
+deduplication and Telegram delivery, including in GitHub Actions. M4 adds a second
+free provider to that same flow. Arbeitnow remains enabled by default; Himalayas
+is opt-in and needs no API key. Copy `config/discovery.example.yaml` to the ignored
+`config/discovery.yaml`, then set `providers.himalayas.enabled: true`.
+
+```sh
+job-scout discover-jobs --config config/discovery.yaml --profile config/profile.yaml
+job-scout run --discovery-config config/discovery.yaml --profile config/profile.yaml --dry-run
+```
+
+Use `mode: browse` for a bounded feed with opaque cursor pagination, or `mode: search`
+for paged keyword searches generated from the selected profile's primary/secondary
+roles. Search rotates a bounded subset daily; `--track` selects a career track.
+Optional search filters are `country` or `worldwide_only`, plus `sort: recent` or
+`relevant`. Page, request, retry, response-size and runtime limits are configurable.
+In GitHub Actions, put these settings in the optional `JOBSCOUT_DISCOVERY_YAML` secret.
+
+Each report includes unique observations, matching jobs, requests and expired
+postings per provider, plus storage inserts/updates. These measure the fetched
+sample, not total market coverage or guaranteed cross-provider uniqueness.
+Himalayas covers **remote roles only**, and remote postings can restrict countries
+and timezones. The digest preserves those restrictions, reported salary and visible
+Himalayas attribution; unknown work authorization stays unknown. Explicitly expired
+postings are excluded from new observations. Data refreshes daily; avoid polling
+more frequently. See the [provider guide](docs/job-discovery.md#himalayas-m4) and
+[official API documentation](https://himalayas.app/docs/remote-jobs-api).
+
+M4 uses the existing schema 4 and adds backward-compatible JSON fields; no further
+schema migration is needed after M3. Update every runner before ingesting Himalayas
+jobs because older application versions do not recognize this provider.
+
+## Optional: register known employer boards
+
+Follow the [source discovery guide](docs/discovery.md). `company add <careers-url>`
+detects Greenhouse, Lever, and Ashby boards, validates their public endpoints, and
+activates unambiguous sources or stores a review candidate. Use `--dry-run` first.
+Existing databases need `job-scout db-migrate` for schema 4 before other commands.
+
+`run` and `ingest` now use the database registry, seeded once from existing YAML.
+Registered disabled sources stay disabled on subsequent seed imports. Use
+`company list`, `company candidates`, `company approve`, `company disable`, and
+`company enable` to manage them. `--registry-only` monitors without a YAML file.
+For a text list of careers URLs, use:
+
+```sh
+job-scout discover-sources --input employers.txt --dry-run
+job-scout discover-sources --input employers.txt
+```
+
+Put one URL per line; blank lines and `#` comments are ignored. See
+[employers.example.txt](config/employers.example.txt) for the format. Duplicate
+boards are validated once; invalid inputs and temporary failures are reported
+without discarding successful registrations. Unsupported career-page URLs remain
+in review (no general website crawler). CSV/YAML imports remain later extensions. This command imports supplied URLs;
+`discover-jobs` independently finds postings across employers.
 
 ## Local setup
 
@@ -24,7 +144,7 @@ If already installed, activate the environment and repeat the installation
 command to install the collection dependencies. `python -m job_scout` is an
 alternative entry point. No credentials are needed for public collection.
 
-## Try collection
+## Optional: monitor known employer boards
 
 First check the CLI using the disabled example sources (no API requests):
 
@@ -39,7 +159,8 @@ create a private registry, if you do not already have one:
 cp config/companies.example.yaml config/companies.yaml
 ```
 
-Start with a small set of employers you care about. Follow the careers link
+To supplement global discovery with direct board monitoring, choose employers
+you care about. Follow the careers link
 from each employer's official website and confirm that it leads to a public
 Greenhouse or Lever board. Copy the board identifier from that board's URL;
 do not guess identifiers from company names. Check the employer's identity
@@ -145,9 +266,10 @@ Persistence rules:
 
 - Identity is provider + API region + board identifier + source posting ID.
   Re-ingesting the same posting updates it without adding another row.
-  Distinct openings with matching titles or application URLs remain distinct;
-  cross-board repost merging is deferred until an occurrence/link model can
-  preserve independent source history safely.
+  Distinct openings with matching titles remain distinct. In the daily run,
+  an exact recognized ATS posting URL plus an agreeing title can link a feed
+  occurrence to an independently fetched publisher posting. Ambiguous links,
+  board-only URLs and title/location similarity do not cause merges.
 - `first_seen_at` is retained; `last_seen_at` advances only when the job is
   actually fetched. Description, title, links, and source metadata are updated.
   Source-supplied posting/update dates remain separate from these timestamps.
@@ -157,13 +279,15 @@ Persistence rules:
 - Replaying a report, or ingesting an older source attempt after a newer one,
   does not change jobs or health. Source transactions serialize concurrent
   writers so repeated ingestion cannot create duplicate identities.
-- Schema revision 2 retains `sources`, `jobs`, and `schema_version`, and adds
+- Schema revision 4 retains `sources`, `jobs`, and `schema_version`, and adds
   `digests`, `notification_log`, and `delivery_locks`. Job data
   stores canonical fields and selected source metadata as JSON, with indexed
   identity, freshness, and lifecycle fields in columns. No profiles or
   credentials are stored in job rows. Delivery snapshots contain rendered messages
   and hashed recipient/job identities, never bot tokens or full profiles.
-  `db-migrate` upgrades revision 1 without losing jobs/source history.
+  `db-migrate` upgrades revisions 1, 2 and 3 without losing jobs/source or delivery history.
+  Revision 3 added companies, discovery candidates and source registration metadata.
+  Revision 4 adds durable feed-to-publisher identity links and verification timestamps.
   `db-init` does not silently alter existing tables.
 
 ### PostgreSQL pathway
@@ -195,8 +319,8 @@ as YAML `null`; do not use the string `"unknown"`.
 job-scout match --profile config/profile.yaml --limit 20
 job-scout match --profile config/profile.yaml --min-score 60
 job-scout match --profile config/profile.yaml --include-ineligible
-# The sanitized example includes an optional systems track:
-job-scout match --profile config/profile.example.yaml --track systems
+# Replace TRACK_NAME with a career_tracks key in your private profile:
+job-scout match --profile config/profile.yaml --track TRACK_NAME
 ```
 
 Matching reads open jobs from `DATABASE_URL`. It makes no network requests,
@@ -208,7 +332,7 @@ eligibility evidence, rejection reasons, and unknowns. It also reports the
 number of open and ineligible jobs before filtering. `--limit` defaults to the
 profile's `digest.maximum_matches`. Invalid profiles/options return exit `2`.
 
-Eligibility rules are intentionally narrow:
+Current eligibility rules are narrow and include the legacy limitation noted above:
 
 - `ineligible`: clear seniority in the title, incompatible mandatory degree,
   explicitly required enrollment contradicted by the profile, incompatible
@@ -221,8 +345,8 @@ Eligibility rules are intentionally narrow:
 
 Text extraction recognizes full sentences such as `A PhD is required`,
 `Applicants must be currently enrolled`, `Visa sponsorship is not available`,
-and `Candidates must graduate between 2027-01-01 and 2027-12-31`. Windows are
-inclusive. Preferences, negations, alternative qualifications, malformed dates,
+and explicit graduation-window sentences containing two ISO dates. Windows are
+inclusive; these are posting requirements, not assumed candidate facts. Preferences, negations, alternative qualifications, malformed dates,
 and unsupported wording do not trigger these exclusions. Degree level does
 not establish degree completion; that uncertainty is reported separately.
 
@@ -264,7 +388,8 @@ Optional `career_tracks` entries override primary/secondary roles, and optionall
 skills and weights, without changing the base profile. Other profile fields
 remain shared. Only worldwide search is supported in this milestone;
 `preferences.search_worldwide` must remain `true`. Region preferences affect
-ranking rather than excluding Hong Kong or other regions.
+ranking rather than automatically excluding other regions. Explicit location
+filters can narrow results separately.
 
 ## Daily Telegram digest
 
@@ -281,14 +406,19 @@ job-scout run --limit 5
 job-scout delivery-status
 ```
 
-`run` collects enabled boards, stores collection results, ranks freshly observed
-jobs from successful sources, and sends only previously undelivered matches.
+`run` collects the enabled discovery feed and registered boards independently,
+stores observations, reconciles verified duplicate identities, and ranks freshly
+observed jobs before sending previously undelivered matches. A feed or ATS failure
+is reported as reduced coverage without suppressing healthy results. Earlier feed
+pages remain usable if a later page fails. `--discovery-config` selects optional
+feed/registration budgets; company YAML and registered boards are optional.
 It respects `digest.minimum_score` (default 60), `maximum_matches`, and `timezone`.
 CLI `--min-score`, `--limit`, and `--track` allow overrides. Clear ineligibility
 is excluded; unknown eligibility is disclosed and remains eligible for inclusion.
 
-Dry-run fetches boards but writes no jobs, health, digest plans, or delivery
-success and makes no Telegram requests. It requires schema 2 but no bot token.
+Dry-run fetches feeds/boards and previews registration, but writes no jobs, health,
+identity links, source registrations, digest plans or delivery success and makes
+no Telegram requests. It requires schema 4 but no bot token.
 Set `TELEGRAM_CHAT_ID` for a preview that respects your delivery history;
 without it, all matches are treated as undelivered. A saved unfinished digest
 is previewed/resumed before any new collection.
@@ -315,14 +445,20 @@ Unfinished digests resume first; uncertain outcomes still require the separate
 outbox without deleting history; no database migration is required. Scheduled
 runs keep their once-per-day behavior.
 
-Delivery identity is source/region/board/posting ID; cross-board reposts can
-still appear separately. Keep the same database to preserve notification history.
+Delivery preserves existing source/region/board/posting keys. Verified equivalent
+feed/ATS keys are saved together on digest parts and checked against older delivery
+history, so either occurrence being previously sent suppresses another notification.
+Separate source records remain available for provenance. Jobs without an exact,
+independently confirmed identity link may still appear separately; names and titles
+alone are insufficient. Keep the same database to preserve notification history.
 The [deployment guide](docs/deployment.md) explains unattended cloud execution.
 Scheduling stays disabled until you set the repository enable variable.
 
 ## Private configuration
 
-`config/profile.example.yaml` is a sanitized, validated matching template.
+`config/profile.example.yaml` is a schema example, not a required candidate
+background or a source of personal defaults. Replace its preferences with your
+own and keep actual candidate information in private, ignored files.
 `null` eligibility fields mean unknown. `.env.example` shows database
 and Telegram settings. The `match` command loads the requested profile; `.env` is not automatically
 loaded. Database commands read `DATABASE_URL` from the process environment.
@@ -359,6 +495,8 @@ No live employer or Telegram calls are required.
 - `models.py`, `config.py`, `normalize.py`: shared records, registry loading,
   and text normalization.
 - `sources/`: adapter protocol, shared HTTP behavior, Greenhouse, and Lever.
+- `discovery/`: separate global job providers/orchestration and existing manual
+  ATS registration; bounded Arbeitnow fetching uses the shared job repository.
 - `collection.py`: bounded orchestration and independent employer outcomes.
 - `main.py`: CLI; provider parsing stays inside adapters.
 - `storage/`: SQLAlchemy schema/setup and transactional repository.
@@ -370,6 +508,5 @@ No live employer or Telegram calls are required.
 - `cloud.py`: private cloud configuration and sanitized execution summaries.
 - `.github/workflows/`: offline CI with PostgreSQL, and scheduled/manual delivery.
 
-**Next: deploy and observe the MVP.** Complete the deployment guide and confirm a
-manual send and a scheduled run. Milestone 7 expansion is optional after that.
-See `AGENTS.md` for scope and milestone requirements.
+**Next: M5 — optional broader discovery with explicit provider terms and budgets.**
+See `AGENTS.md` and [the discovery guide](docs/job-discovery.md) for scope and limitations.

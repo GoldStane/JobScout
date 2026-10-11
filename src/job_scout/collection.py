@@ -35,6 +35,10 @@ async def collect(
         async with semaphore:
             attempted = utc_now()
             try:
+                if config.source not in adapters:
+                    raise SourceError(
+                        "Unsupported provider; disable this source until an adapter exists"
+                    )
                 jobs = await adapters[config.source].fetch_jobs(config)
             except SourceError as exc:
                 logger.warning(

@@ -57,6 +57,7 @@ def test_cli_dry_run_needs_no_credentials_and_writes_nothing(environment, capsys
         cli.main(
             [
                 "run",
+                "--no-discovery",
                 "--dry-run",
                 "--config",
                 str(registry),

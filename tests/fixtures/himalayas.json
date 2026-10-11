@@ -1,0 +1,36 @@
+{
+  "jobs": [
+    {
+      "guid": "https://himalayas.app/companies/example-studio/jobs/product-designer",
+      "title": "Product Designer",
+      "companyName": "Example Studio",
+      "companySlug": "example-studio",
+      "applicationLink": "https://himalayas.app/companies/example-studio/jobs/product-designer",
+      "description": "<p>Create accessible interfaces and prototypes.</p><script>ignore me</script>",
+      "employmentType": "Full Time",
+      "locationRestrictions": ["Canada", "United States"],
+      "timezoneRestrictions": [-8, -5],
+      "seniority": ["Entry-level"],
+      "categories": ["Design"],
+      "minSalary": 50000,
+      "maxSalary": 70000,
+      "currency": "CAD",
+      "salaryPeriod": "year",
+      "pubDate": 1791492012,
+      "expiryDate": 4102444800
+    },
+    {
+      "guid": "example-editor",
+      "title": "Editor",
+      "companyName": "Example Publishing",
+      "applicationLink": "https://himalayas.app/companies/example-publishing/jobs/editor",
+      "excerpt": "<p>Edit clear documentation.</p>",
+      "locationRestrictions": [],
+      "timezoneRestrictions": [],
+      "pubDate": "2026-10-08T19:20:12Z"
+    }
+  ],
+  "limit": 20,
+  "totalCount": 2,
+  "offset": 0
+}

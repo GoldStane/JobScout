@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-from job_scout.models import SourceConfig
+from job_scout.models import SourceConfig, valid_board_id
 
 HOSTS = {
     "boards.greenhouse.io": ("greenhouse", "global", "job-boards.greenhouse.io"),
@@ -73,7 +73,7 @@ def detect(value: str, *, name: str | None = None) -> Candidate:
         return Candidate(urlunsplit((url.scheme, host, url.path or "/", "", "")), None)
     provider, region, canonical_host = HOSTS[host]
     board = unquote(url.path.lstrip("/").split("/", 1)[0])
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", board) or board.startswith("REPLACE_WITH_"):
+    if not valid_board_id(provider, board) or board.startswith("REPLACE_WITH_"):
         raise DiscoveryError("URL does not contain a valid board identifier")
     return Candidate(
         f"https://{canonical_host}/{board}",

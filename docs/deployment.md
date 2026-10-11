@@ -219,6 +219,12 @@ notifications depend on your account notification preferences.
 - Exit **2**, configuration error: check secret names, YAML indentation, enabled
   sources, chat/token settings, and TLS URL. Validate YAML locally before replacing
   its secret.
+  YAML errors now identify the secret and schema location without printing values
+  or unknown key names. For example, `sources.10.board_id` means the eleventh
+  source. Ashby board names may contain internal dots (e.g. `example.ai`); keep
+  the exact hosted board name, not a full URL. After deploying a validator fix,
+  start a new workflow run on the updated default branch rather than rerunning
+  the failed run's older commit.
 - Exit **3**, database/runtime error: check provider availability, database URL,
   initialization or migration, and installed dependencies.
 - Exit **4**, delivery needs attention: check Telegram and run mode status. Definite

@@ -229,3 +229,34 @@ def test_cloud_health_only_emits_allowlisted_counters(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "PRIVATE_SENTINEL" not in output
     assert json.loads(output)["discovery_counts"]["remotive"]["inserted"] == 3
+
+
+@pytest.mark.parametrize(
+    "secret,value,expected",
+    [
+        (
+            "JOBSCOUT_COMPANIES_YAML",
+            "sources: [{source: ashby, company: PRIVATE_VALUE, board_id: 'bad/name'}]",
+            "sources.0.board_id",
+        ),
+        ("JOBSCOUT_PROFILE_YAML", "skills: 123", "skills"),
+        (
+            "JOBSCOUT_DISCOVERY_YAML",
+            "providers: {arbeitnow: {max_pages: 0}}",
+            "providers.arbeitnow.max_pages",
+        ),
+        ("JOBSCOUT_PROFILE_YAML", "PRIVATE_KEY: PRIVATE_VALUE", "<entry>"),
+        ("JOBSCOUT_PROFILE_YAML", "skills: [PRIVATE_VALUE", "line 1"),
+    ],
+)
+def test_cloud_names_invalid_secret_without_values(
+    environment, monkeypatch, capsys, secret, value, expected
+):
+    monkeypatch.setenv(secret, value)
+    monkeypatch.setattr(
+        cloud, "invoke", lambda args: pytest.fail("Invalid config must stop before run")
+    )
+    assert cloud.main() == 2
+    output = capsys.readouterr().out
+    assert secret in output and expected in output
+    assert "PRIVATE_VALUE" not in output and "PRIVATE_KEY" not in output

@@ -1,5 +1,6 @@
 """Validated configuration and canonical collection records."""
 
+import re
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
@@ -11,6 +12,8 @@ from pydantic import (
     Field,
     HttpUrl,
     StringConstraints,
+    ValidationInfo,
+    field_validator,
     model_validator,
 )
 
@@ -21,14 +24,27 @@ FeedProvider = Literal["arbeitnow", "himalayas", "remotive"]
 FEED_PROVIDERS = {"arbeitnow", "himalayas", "remotive"}
 
 
+def valid_board_id(provider: str, value: str) -> bool:
+    # Dots inside Ashby board names are literal characters, never path segments.
+    pattern = r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*" if provider == "ashby" else r"[A-Za-z0-9_-]+"
+    return len(value) <= 200 and re.fullmatch(pattern, value) is not None
+
+
 class SourceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source: Provider
     company: NonEmpty
-    board_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]+$", max_length=200)]
+    board_id: Annotated[str, StringConstraints(min_length=1, max_length=200)]
     enabled: bool = False
     region: Literal["global", "eu"] = "global"
+
+    @field_validator("board_id")
+    @classmethod
+    def validate_board(cls, value: str, info: ValidationInfo) -> str:
+        if not valid_board_id(info.data.get("source", ""), value):
+            raise ValueError("Invalid board_id; use a board name, not a URL or path")
+        return value
 
     @model_validator(mode="after")
     def validate_source(self) -> "SourceConfig":

@@ -9,21 +9,63 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import get_args
 from zoneinfo import ZoneInfo
 
+import yaml
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.engine import make_url
 
 from job_scout.config import load_registry
-from job_scout.discovery.settings import load_settings
+from job_scout.discovery.settings import DiscoverySettings, load_settings
 from job_scout.main import main as cli_main
 from job_scout.matching.profile import Profile, load_profile
-from job_scout.models import utc_now
+from job_scout.models import SourceRegistry, utc_now
 
 MODES = {"initialize", "migrate", "preview", "send", "status", "health"}
 
 
 class CloudConfigError(Exception):
     """Configuration error whose message never contains private values."""
+
+
+def config_error(secret: str, exc: Exception, model: type[BaseModel]) -> str:
+    """Report schema locations, never values, unknown keys, messages or YAML excerpts."""
+    if isinstance(exc, yaml.YAMLError):
+        mark = getattr(exc, "problem_mark", None)
+        position = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
+        return f"{secret}: invalid YAML{position}; check indentation and quoting"
+    if isinstance(exc, ValidationError):
+        fields = set()
+        seen = set()
+
+        def visit(annotation):
+            if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+                if annotation in seen:
+                    return
+                seen.add(annotation)
+                for name, field in annotation.model_fields.items():
+                    fields.add(name)
+                    visit(field.annotation)
+            for argument in get_args(annotation):
+                visit(argument)
+
+        visit(model)
+        details = []
+        for error in exc.errors(include_input=False, include_url=False, include_context=False)[:5]:
+            location = (
+                ".".join(
+                    str(part) if isinstance(part, int) or part in fields else "<entry>"
+                    for part in error["loc"]
+                )
+                or "root"
+            )
+            details.append(location)
+        return (
+            f"{secret}: invalid configuration at {', '.join(details)} "
+            "(list indices start at 0); validate locally against the example YAML"
+        )
+    return f"{secret}: cannot load configuration; validate locally before updating the secret"
 
 
 def required(name: str) -> str:
@@ -160,14 +202,17 @@ def main() -> int:
                 fallback = "sources: []" if name == "companies" else "{}"
                 path.write_text(value or fallback, encoding="utf-8")
                 paths[name] = path
-            try:
-                load_registry(paths["companies"])
-                profile = load_profile(paths["profile"])
-                load_settings(paths["discovery"])
-            except Exception:
-                raise CloudConfigError(
-                    "Invalid private YAML; validate locally before updating secrets"
-                ) from None
+            loaded = {}
+            for name, secret, loader, model in [
+                ("companies", "JOBSCOUT_COMPANIES_YAML", load_registry, SourceRegistry),
+                ("profile", "JOBSCOUT_PROFILE_YAML", load_profile, Profile),
+                ("discovery", "JOBSCOUT_DISCOVERY_YAML", load_settings, DiscoverySettings),
+            ]:
+                try:
+                    loaded[name] = loader(paths[name])
+                except Exception as exc:
+                    raise CloudConfigError(config_error(secret, exc, model)) from None
+            profile = loaded["profile"]
             if event == "schedule" and not schedule_due(profile, utc_now()):
                 print(json.dumps({"status": "before_send_after"}))
                 return 0

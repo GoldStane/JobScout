@@ -40,10 +40,44 @@ class HimalayasSettings(ArbeitnowSettings):
         return self
 
 
+class BraveSettings(ArbeitnowSettings):
+    enabled: bool = False
+    country: str | None = Field(default=None, min_length=1, max_length=80)
+    max_queries: int = Field(default=3, ge=1, le=10)
+    max_pages: int = Field(default=1, ge=1, le=10)
+    max_requests: int = Field(default=3, ge=1, le=30)
+    daily_request_limit: int = Field(default=6, ge=1, le=1000)
+    monthly_request_limit: int = Field(default=180, ge=1, le=10000)
+    results_per_page: int = Field(default=10, ge=1, le=20)
+    max_boards: int = Field(default=5, ge=1, le=20)
+    publisher_max_requests: int = Field(default=15, ge=1, le=60)
+    publisher_runtime_seconds: float = Field(default=90.0, gt=0, le=300)
+    interval_seconds: float = Field(default=1.1, ge=1.0, le=60)
+    max_runtime_seconds: float = Field(default=180.0, gt=0, le=600)
+    freshness: Literal["pd", "pw", "pm", "py"] | None = None
+
+    @model_validator(mode="after")
+    def country_name(self):
+        if self.country is not None:
+            self.country = normalize_country(self.country)
+        return self
+
+
+class RemotiveSettings(ArbeitnowSettings):
+    enabled: bool = False
+    max_pages: Literal[1] = 1
+    max_requests: Literal[1] = 1
+    attempts: Literal[1] = 1
+    limit: int = Field(default=100, ge=1, le=1000)
+    refresh_hours: int = Field(default=24, ge=6, le=168)
+
+
 class Providers(BaseModel):
     model_config = ConfigDict(extra="forbid")
     arbeitnow: ArbeitnowSettings = Field(default_factory=ArbeitnowSettings)
     himalayas: HimalayasSettings = Field(default_factory=HimalayasSettings)
+    brave: BraveSettings = Field(default_factory=BraveSettings)
+    remotive: RemotiveSettings = Field(default_factory=RemotiveSettings)
 
 
 class RegistrationSettings(BaseModel):
@@ -67,3 +101,40 @@ def load_settings(path: Path | None) -> DiscoverySettings:
         return DiscoverySettings()
     with path.open(encoding="utf-8") as stream:
         return DiscoverySettings.model_validate(yaml.safe_load(stream))
+
+
+def normalize_country(country: str) -> str:
+    value = " ".join(country.split())
+    # Common ISO aliases; all other countries can be supplied by their full name.
+    aliases = {
+        "HK": "Hong Kong",
+        "US": "United States",
+        "GB": "United Kingdom",
+        "UK": "United Kingdom",
+        "CA": "Canada",
+        "AU": "Australia",
+        "DE": "Germany",
+        "FR": "France",
+        "IT": "Italy",
+        "ES": "Spain",
+        "JP": "Japan",
+        "SG": "Singapore",
+        "IN": "India",
+        "CN": "China",
+    }
+    value = aliases.get(value.upper(), value)
+    if len(value) < 3 or len(value) > 80 or any(ord(c) < 32 for c in value):
+        raise ValueError("Use a full country name (or a documented country-code alias)")
+    return value
+
+
+def select_country(settings: DiscoverySettings, country: str | None) -> DiscoverySettings:
+    """Explicit CLI geography overrides enabled search providers, never enables billing."""
+    if country is None:
+        return settings
+    value = normalize_country(country)
+    data = settings.model_dump()
+    if settings.providers.himalayas.enabled:
+        data["providers"]["himalayas"].update(mode="search", country=value, worldwide_only=False)
+    data["providers"]["brave"]["country"] = value
+    return DiscoverySettings.model_validate(data)

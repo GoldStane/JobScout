@@ -34,11 +34,15 @@ class BoardHTTP:
         max_bytes: int = 10_000_000,
         max_requests: int = 300,
         minimum_rate_limit_delay: float = 0,
+        before_request: Callable[[], None] | None = None,
+        after_response: Callable[[httpx.Response], None] | None = None,
     ) -> None:
         if attempts < 1 or interval < 0:
             raise ValueError("attempts must be positive and interval nonnegative")
         if max_bytes < 1 or max_requests < 1:
             raise ValueError("Response and request budgets must be positive")
+        self.before_request = before_request
+        self.after_response = after_response
         self.minimum_rate_limit_delay = minimum_rate_limit_delay
         self.max_bytes = max_bytes
         self.max_requests = max_requests
@@ -78,6 +82,8 @@ class BoardHTTP:
             try:
                 if self.requests >= self.max_requests:
                     raise SourceError("Request budget exhausted; retry later with a larger budget")
+                if self.before_request:
+                    self.before_request()
                 self.requests += 1
                 async with self.client.stream(
                     "GET",
@@ -103,6 +109,8 @@ class BoardHTTP:
             except httpx.TransportError as exc:
                 reason = f"Transport failure: {type(exc).__name__}"
             else:
+                if self.after_response:
+                    self.after_response(response)
                 if response.status_code == 429 or 500 <= response.status_code < 600:
                     reason = f"HTTP {response.status_code} after retries"
                     delay = self._retry_after(response)

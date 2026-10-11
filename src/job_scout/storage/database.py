@@ -22,7 +22,7 @@ from sqlalchemy.engine import Connection, Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 DEFAULT_DATABASE_URL = "sqlite:///data/jobscout.db"
 
 
@@ -141,6 +141,43 @@ class JobLinkRow(Base):
     method: Mapped[str] = mapped_column(default="exact_ats_url_and_title")
 
 
+class DiscoveryBudgetRow(Base):
+    """Operational request counts only; never search queries or result data."""
+
+    __tablename__ = "discovery_budgets"
+    period: Mapped[str] = mapped_column(String(40), primary_key=True)
+    requests: Mapped[int] = mapped_column(Integer, default=0)
+    __table_args__ = (CheckConstraint("requests >= 0", name="nonnegative_requests"),)
+
+
+class DiscoveryRunRow(Base):
+    """Aggregate operational metrics only; no queries, URLs, snippets or profile data."""
+
+    __tablename__ = "discovery_runs"
+    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
+    attempted_at: Mapped[datetime] = mapped_column(UTCDateTime(), primary_key=True)
+    completed_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    status: Mapped[str] = mapped_column(String(24))
+    counters: Mapped[dict] = mapped_column(JSON)
+
+
+class DiscoveryScheduleRow(Base):
+    __tablename__ = "discovery_schedule"
+    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
+    next_due: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
+class FeedbackRow(Base):
+    __tablename__ = "job_feedback"
+    scope: Mapped[str] = mapped_column(String(64), primary_key=True)
+    job_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    rating: Mapped[str] = mapped_column(String(16))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    __table_args__ = (
+        CheckConstraint("rating IN ('relevant', 'irrelevant')", name="valid_feedback_rating"),
+    )
+
+
 class DigestRow(Base):
     __tablename__ = "digests"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -239,7 +276,7 @@ def initialize_database(engine: Engine) -> None:
 
 
 def migrate_database(engine: Engine) -> None:
-    """Additive revisions 1/2/3 -> 4; preserve jobs, delivery history and source IDs."""
+    """Additive revisions 1/2/3/4/5 -> 6; preserve jobs, delivery history and source IDs."""
     with engine.begin() as connection:
         tables = set(inspect(connection).get_table_names())
         if not {"schema_version", "sources", "jobs"}.issubset(tables):
@@ -250,7 +287,7 @@ def migrate_database(engine: Engine) -> None:
         if version == SCHEMA_VERSION:
             _check_schema(connection)
             return
-        if version not in {1, 2, 3}:
+        if version not in {1, 2, 3, 4, 5}:
             raise SchemaError("Unsupported schema version; cannot migrate automatically")
         if version == 1:
             for table in [DigestRow.__table__, NotificationRow.__table__, DeliveryLock.__table__]:
@@ -272,6 +309,9 @@ def migrate_database(engine: Engine) -> None:
                 connection.execute(text(f"ALTER TABLE sources ADD COLUMN {name} {definition}"))
         CandidateRow.__table__.create(connection, checkfirst=True)
         JobLinkRow.__table__.create(connection, checkfirst=True)
+        DiscoveryBudgetRow.__table__.create(connection, checkfirst=True)
+        for table in (DiscoveryRunRow, DiscoveryScheduleRow, FeedbackRow):
+            table.__table__.create(connection, checkfirst=True)
         connection.execute(
             SchemaVersion.__table__.update()
             .where(SchemaVersion.id == 1)

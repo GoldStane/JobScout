@@ -9,7 +9,7 @@ from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from job_scout.deduplicate import reconcile_jobs
-from job_scout.discovery.base import DiscoveryBatch, DiscoveryResult
+from job_scout.discovery.base import DiscoveryBatch, DiscoveryResult, PublisherDiscoveryResult
 from job_scout.discovery.registration import RegistrationReport
 from job_scout.matching.profile import Profile
 from job_scout.matching.scoring import rank_jobs
@@ -17,6 +17,7 @@ from job_scout.models import CollectionReport
 from job_scout.notifications.digest import build_digest, job_key
 from job_scout.notifications.telegram import DeliveryError
 from job_scout.storage.delivery import DeliveryRepository, recipient_key
+from job_scout.storage.insights import Insights
 from job_scout.storage.repository import Repository
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,8 @@ async def run_digest(
         if not dry_run:
             repository.ingest(report)
             for result in discoveries:
-                repository.ingest_discovery(result)
+                counts = repository.ingest_discovery(result)
+                Insights(repository.engine).record(result, counts, profile)
         if discovery is not None and register is not None:
             registration = await register(discovery)
     failures = (
@@ -92,7 +94,7 @@ async def run_digest(
     for result in discoveries:
         if result.error:
             failures.append(f"{result.provider}: {result.error}")
-        if result.skipped:
+        if result.skipped and not isinstance(result, PublisherDiscoveryResult):
             failures.append(f"{result.provider}: {result.skipped} invalid postings skipped")
     if registration is not None and registration.failed:
         failures.append("ATS registration incomplete; see discover-jobs or company candidates")
@@ -115,7 +117,12 @@ async def run_digest(
         delivered = deliveries.delivered_keys(recipient)
         matches = [
             match
-            for match in rank_jobs(reconciled.jobs, profile)
+            for match in rank_jobs(
+                Insights(repository.engine).filter_jobs(
+                    reconciled.jobs, profile.feedback_scope, reconciled.aliases
+                ),
+                profile,
+            )
             if not delivered.intersection(reconciled.aliases[job_key(match.job)])
             and match.score >= profile.digest.minimum_score
         ]
@@ -128,6 +135,10 @@ async def run_digest(
             + sum(result.pages > 0 for result in discoveries),
             maximum_matches=profile.digest.maximum_matches,
             identity_aliases=reconciled.aliases,
+            cached_sources=sum(
+                getattr(r, "status", "completed") in {"cached", "dry_run_skipped"} and bool(r.jobs)
+                for r in discoveries
+            ),
         )
 
     if dry_run:
@@ -136,6 +147,13 @@ async def run_digest(
             if saved
             else [part.text for part in preview_parts()]
         )
+        if any(
+            isinstance(r, PublisherDiscoveryResult) and r.status == "dry_run_skipped"
+            for r in discoveries
+        ):
+            texts.insert(0, "Metered Brave search skipped in dry-run; no requests or quota writes.")
+        if any(r.provider == "remotive" and r.status == "dry_run_skipped" for r in discoveries):
+            texts.insert(0, "Remotive refresh skipped in dry-run; recent cached jobs only.")
         return RunResult(texts, "dry_run", len(failures))
 
     owner = deliveries.acquire(recipient)

@@ -19,7 +19,7 @@ from job_scout.main import main as cli_main
 from job_scout.matching.profile import Profile, load_profile
 from job_scout.models import utc_now
 
-MODES = {"initialize", "migrate", "preview", "send", "status"}
+MODES = {"initialize", "migrate", "preview", "send", "status", "health"}
 
 
 class CloudConfigError(Exception):
@@ -80,7 +80,24 @@ def invoke(arguments: list[str]) -> int:
     # Status/preview bodies are intentionally omitted, including on public repos.
     try:
         raw = output.getvalue().strip()
-        if arguments[0] == "delivery-status":
+        if arguments[0] == "discovery-health":
+            rows = json.loads(raw)
+            # Fixed provider names and integer counts only; no job/profile content.
+            summary["discovery_counts"] = {
+                row["provider"]: {
+                    key: row[key]
+                    for key in ("runs", "failed_or_partial")
+                    if type(row.get(key)) is int
+                }
+                | {
+                    key: row.get("totals", {}).get(key, 0)
+                    for key in ("requests", "publisher_requests", "inserted")
+                    if type(row.get("totals", {}).get(key, 0)) is int
+                }
+                for row in rows
+                if row.get("provider") in {"arbeitnow", "himalayas", "brave", "remotive"}
+            }
+        elif arguments[0] == "delivery-status":
             rows = json.loads(raw)
             states = Counter(row["status"] for row in rows)
             summary["delivery_counts"] = {
@@ -121,6 +138,8 @@ def main() -> int:
         validate_database(required("DATABASE_URL"))
         if mode in {"initialize", "migrate"}:
             return invoke(["db-init" if mode == "initialize" else "db-migrate"])
+        if mode == "health":
+            return invoke(["discovery-health"])
         required("TELEGRAM_CHAT_ID")
         if mode == "status":
             return invoke(["delivery-status"])

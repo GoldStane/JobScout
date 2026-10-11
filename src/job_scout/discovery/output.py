@@ -17,7 +17,8 @@ def render_discovery(report: dict) -> str:
         mode,
         f"Provider: {report['provider']} · Pages: {report['pages']} · "
         f"Requests: {report['requests']}",
-        f"Jobs: {report['fetched_jobs']} fetched · {report['skipped_jobs']} skipped",
+        f"Jobs: {report['fetched_jobs']} fetched · {report.get('cached_jobs', 0)} cached · "
+        f"{report['skipped_jobs']} skipped",
     ]
     for provider in report.get("providers", []):
         lines.append(
@@ -25,6 +26,19 @@ def render_discovery(report: dict) -> str:
             f"{provider['matching_jobs']} matches · {provider['requests']} requests · "
             f"{provider['expired']} expired"
         )
+        if provider.get("status") == "dry_run_skipped":
+            lines.append(
+                "    Metered Brave search skipped in dry-run; no requests or quota writes."
+                if provider["provider"] == "brave"
+                else "    Remotive refresh skipped in dry-run; recent cached jobs only."
+            )
+        if provider.get("status") == "cached":
+            lines.append("    Refresh not due; recent cached jobs shown without new requests.")
+        if provider.get("publisher_requests"):
+            lines.append(
+                f"    Publisher verification: {provider['publisher_requests']} requests · "
+                f"{provider['failed_boards']} failed boards · {provider['deferred']} deferred"
+            )
         if provider["error"]:
             lines.append("    Error: " + clean(provider["error"]))
     counts = report["ingestion"]
@@ -67,6 +81,7 @@ def render_discovery(report: dict) -> str:
             f"{index}. {clean(job['title'])} — {clean(job['company'])}",
             f"   {match['score']:.1f}/100 · {clean(job['location_text'] or 'Location unknown')} · "
             f"{clean(match['role_type'] or job['employment_type'] or 'Type unknown')}",
+            f"   Feedback ID: {match.get('job_key', 'unavailable')}",
             f"   Eligibility: {clean(match['eligibility']['status'])}",
         ]
         for reason in match["reasons"]:

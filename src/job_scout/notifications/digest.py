@@ -44,11 +44,14 @@ def build_digest(
     maximum_matches: int,
     identity_aliases: dict[str, list[str]] | None = None,
     discovery_preview: bool = False,
+    cached_sources: int = 0,
 ) -> list[DigestPart]:
     """Formatting is deliberately plain text; job text is never parsed as markup."""
     date = now.astimezone(ZoneInfo(timezone)).date().isoformat()
     blocks: list[tuple[str, list[str]]] = []
     coverage = f"Coverage: {successful_sources} successful source(s), {len(failures)} failed."
+    if cached_sources:
+        coverage += f"\n{cached_sources} source(s) supplied recent cached jobs; not refreshed."
     if failures:
         coverage += "\nReduced coverage. Failed sources:\n" + "\n".join(
             f"- {clipped(failure, 150)}" for failure in failures[:10]
@@ -57,8 +60,8 @@ def build_digest(
             coverage += f"\nAnd {len(failures) - 10} more; see source-health."
     if not matches:
         coverage += (
-            "\nNo new relevant matches from successfully checked sources."
-            if successful_sources
+            "\nNo new relevant matches from available sources."
+            if successful_sources or cached_sources
             else "\nNo sources were successfully checked; results are unavailable."
         )
     else:

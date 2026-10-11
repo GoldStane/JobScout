@@ -300,7 +300,7 @@ def test_invalid_settings_rejected(settings):
 
 def test_unimplemented_providers_rejected():
     with pytest.raises(ValidationError):
-        DiscoverySettings.model_validate({"providers": {"brave": {"enabled": True}}})
+        DiscoverySettings.model_validate({"providers": {"unimplemented": {"enabled": True}}})
 
 
 def test_private_dns_target_rejected():

@@ -25,3 +25,9 @@ and two bounded response-shape samples checked on 2026-10-11. It includes countr
 and timezone restrictions, stated pay and publication/expiry timestamps. Tests
 also cover documented ISO/millisecond dates and country objects. No live posting
 content is retained; all HTTP and delivery in the acceptance tests are mocked.
+
+`brave.json` is a synthetic search envelope based on the official Web Search API
+and pagination documentation checked on 2026-10-11. Its sentinel snippets, titles,
+query echo and tracking parameters must never enter persistent storage or digests.
+Publisher content comes from separate mocked `discovery.json` responses. No real
+Brave account, key, billed API request or search-result payload was used.

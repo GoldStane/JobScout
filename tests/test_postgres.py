@@ -199,3 +199,58 @@ def test_postgres_schema_three_upgrade_and_immutable_job_links(postgres):
     repo.save_job_links({"a" * 64: "b" * 64})
     repo.save_job_links({"a" * 64: "c" * 64})
     assert repo.job_links() == {"a" * 64: "b" * 64}
+
+
+def test_postgres_revision_four_and_concurrent_search_quota(postgres):
+    from job_scout.discovery.budgets import SearchBudget
+    from job_scout.sources.base import SourceError
+    from job_scout.storage.database import DiscoveryBudgetRow
+
+    Repository(postgres).ingest(snapshot())
+    with postgres.begin() as connection:
+        DiscoveryBudgetRow.__table__.drop(connection)
+        connection.execute(SchemaVersion.__table__.update().values(version=4))
+    migrate_database(postgres)
+    assert len(Repository(postgres).jobs()) == 1
+    budget = SearchBudget(postgres, 1, 1)
+    barrier = Barrier(2)
+
+    def reserve(_):
+        barrier.wait(timeout=5)
+        try:
+            budget.reserve(datetime(2026, 10, 11, tzinfo=UTC))
+            return True
+        except SourceError:
+            return False
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sum(pool.map(reserve, range(2))) == 1
+
+
+def test_postgres_m6_migration_cooldown_feedback_and_metrics(postgres):
+    from job_scout.notifications.digest import job_key
+    from job_scout.storage.database import DiscoveryRunRow, DiscoveryScheduleRow, FeedbackRow
+    from job_scout.storage.insights import Insights
+
+    repo = Repository(postgres)
+    repo.ingest(snapshot())
+    with postgres.begin() as connection:
+        for table in (DiscoveryRunRow, DiscoveryScheduleRow, FeedbackRow):
+            table.__table__.drop(connection)
+        connection.execute(SchemaVersion.__table__.update().values(version=5))
+    migrate_database(postgres)
+    insights = Insights(postgres)
+    key = job_key(repo.jobs()[0])
+    insights.set_feedback(key, "irrelevant", repo)
+    assert insights.filter_jobs(repo.jobs()) == []
+    insights.set_feedback(key, "relevant", repo)
+    assert len(insights.filter_jobs(repo.jobs())) == 1
+    barrier = Barrier(2)
+
+    def claim(_):
+        barrier.wait(timeout=5)
+        return insights.claim_refresh("remotive", 24)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sum(pool.map(claim, range(2))) == 1
+    assert insights.health() == []

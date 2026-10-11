@@ -288,7 +288,7 @@ def test_actual_schema_three_upgrade_preserves_jobs_and_sent_history(setup):
     assert len(repo.jobs()) == 1 and repo.job_links() == {}
     assert deliveries.delivered_keys(recipient_key("123")) == keys
     with Session(repo.engine) as session:
-        assert session.scalar(select(SchemaVersion.version)) == 4
+        assert session.scalar(select(SchemaVersion.version)) == 6
 
 
 @pytest.mark.parametrize(

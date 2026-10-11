@@ -17,15 +17,17 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from job_scout.collection import collect
 from job_scout.config import load_registry
+from job_scout.deduplicate import reconcile_jobs
 from job_scout.discovery import batch as discovery_batch
 from job_scout.discovery import cli as discovery_cli
 from job_scout.discovery import jobs_cli
 from job_scout.discovery.detect import DiscoveryError
 from job_scout.discovery.registry import Registry
-from job_scout.discovery.settings import load_settings
+from job_scout.discovery.settings import load_settings, select_country
 from job_scout.matching.profile import Profile, load_profile
 from job_scout.matching.scoring import rank_jobs
 from job_scout.models import CollectionReport, SourceRegistry, utc_now
+from job_scout.notifications.digest import job_key
 from job_scout.notifications.service import run_digest
 from job_scout.notifications.telegram import DeliveryError, TelegramSender
 from job_scout.storage.database import (
@@ -36,6 +38,7 @@ from job_scout.storage.database import (
     open_database,
 )
 from job_scout.storage.delivery import DeliveryBusy, DeliveryRepository, recipient_key
+from job_scout.storage.insights import Insights
 from job_scout.storage.repository import Repository
 from job_scout.validation import validate_config
 
@@ -108,12 +111,16 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
         elif args.command == "run":
             assert profile is not None
             try:
-                discovery_settings = load_settings(args.discovery_config)
+                discovery_settings = select_country(
+                    load_settings(args.discovery_config), args.country
+                )
             except (OSError, ValueError, yaml.YAMLError) as exc:
                 parser.exit(2, f"Cannot load discovery configuration ({type(exc).__name__}).\n")
             if args.no_discovery:
                 discovery_settings.providers.arbeitnow.enabled = False
                 discovery_settings.providers.himalayas.enabled = False
+                discovery_settings.providers.brave.enabled = False
+                discovery_settings.providers.remotive.enabled = False
             if args.limit is not None:
                 profile.digest.maximum_matches = args.limit
             if args.min_score is not None:
@@ -147,7 +154,9 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
                         registrations.seed(seeds)
 
                     async def discover_jobs():
-                        result, _ = await jobs_cli.fetch_providers(discovery_settings, profile)
+                        result, _ = await jobs_cli.fetch_providers(
+                            discovery_settings, profile, engine=engine, dry_run=args.dry_run
+                        )
                         return result
 
                     return await run_digest(
@@ -175,7 +184,15 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
         elif args.command == "match":
             assert profile is not None
             jobs = repository.jobs()
-            ranked = rank_jobs(jobs, profile, include_ineligible=True)
+            reconciled = reconcile_jobs(jobs, jobs, repository.job_links())
+            visible = (
+                reconciled.jobs
+                if args.include_dismissed
+                else Insights(engine).filter_jobs(
+                    reconciled.jobs, profile.feedback_scope, reconciled.aliases
+                )
+            )
+            ranked = rank_jobs(visible, profile, include_ineligible=True)
             rejected = sum(item.eligibility.status == "ineligible" for item in ranked)
             selected = [
                 item
@@ -192,7 +209,8 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
                         "ineligible_jobs": rejected,
                         "matching_jobs_before_limit": len(selected),
                         "matches": [
-                            item.model_dump(
+                            {"job_key": job_key(item.job)}
+                            | item.model_dump(
                                 mode="json",
                                 exclude={
                                     "job": {
@@ -212,12 +230,26 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
             print(
                 json.dumps(
                     [
-                        job.model_dump(mode="json")
+                        {"job_key": job_key(job)} | job.model_dump(mode="json")
                         for job in repository.jobs(include_closed=args.include_closed)
                     ],
                     indent=2,
                 )
             )
+        elif args.command == "discovery-health":
+            if not 1 <= args.days <= 365:
+                parser.error("--days must be between 1 and 365")
+            print(json.dumps(Insights(engine).health(args.days), indent=2))
+        elif args.command == "feedback":
+            insights = Insights(engine)
+            if args.action != "list":
+                if not args.job_key:
+                    parser.error("feedback requires a job key from job-scout jobs")
+                try:
+                    insights.set_feedback(args.job_key, args.action, repository, args.scope)
+                except ValueError as exc:
+                    parser.error(str(exc))
+            print(json.dumps(insights.feedback(args.scope), indent=2))
         elif args.command == "source-health":
             print(
                 json.dumps(
@@ -281,6 +313,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     run.add_argument("--profile", type=Path, default=Path("config/profile.yaml"))
     run.add_argument("--track")
+    run.add_argument("--country", help="Country name for enabled search providers; e.g. Hong Kong")
     run.add_argument("--limit", type=int)
     run.add_argument("--min-score", type=float)
     run.add_argument(
@@ -299,8 +332,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     jobs = subcommands.add_parser("jobs", help="Print stored jobs as JSON")
     jobs.add_argument("--include-closed", action="store_true")
     subcommands.add_parser("source-health", help="Print persistent collection health as JSON")
+    health = subcommands.add_parser("discovery-health", help="Provider health and yield counters")
+    health.add_argument("--days", type=int, default=30)
+    feedback = subcommands.add_parser("feedback", help="Record or clear relevance feedback")
+    feedback.add_argument("action", choices=["list", "relevant", "irrelevant", "clear"])
+    feedback.add_argument("job_key", nargs="?")
+    feedback.add_argument("--scope", default="default", help="Must match profile feedback_scope")
     matching = subcommands.add_parser("match", help="Rank stored open jobs using a private profile")
     matching.add_argument("--profile", type=Path, default=Path("config/profile.yaml"))
+    matching.add_argument("--include-dismissed", action="store_true")
     matching.add_argument("--track", help="Optional career_tracks entry in the profile")
     matching.add_argument(
         "--limit", type=int, help="Maximum results; defaults to profile digest limit"

@@ -20,7 +20,8 @@ def reconcile_jobs(fresh: list[Job], history: list[Job], links: dict[str, str]) 
     for job in fresh:
         key = job_key(job)
         previous = records.get(key)
-        records[key] = job.model_copy(
+        newest = previous if previous and previous.fetched_at > job.fetched_at else job
+        records[key] = newest.model_copy(
             update={
                 "first_seen_at": min(job.first_seen_at, previous.first_seen_at)
                 if previous

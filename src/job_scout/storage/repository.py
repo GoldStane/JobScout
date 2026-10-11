@@ -8,7 +8,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from job_scout.discovery.base import DiscoveryResult
+from job_scout.discovery.base import DiscoveryResult, PublisherDiscoveryResult
 from job_scout.models import CollectionReport, Job, SourceResult, utc_now
 from job_scout.storage.database import JobLinkRow, JobRow, SourceRow, check_schema
 
@@ -154,12 +154,21 @@ class Repository:
             row.status = "open"
             row.missing_checks = 0
 
-    def ingest_discovery(self, result: DiscoveryResult) -> IngestCounts:
+    def ingest_discovery(self, result: DiscoveryResult | PublisherDiscoveryResult) -> IngestCounts:
         """Upsert observations, never treat a bounded feed as a full board snapshot.
 
         The existing source FK points to a feed namespace (not an employer or
         registered ATS board). No company or candidate registration is created.
         """
+        if isinstance(result, PublisherDiscoveryResult):
+            total = IngestCounts()
+            for source in result.sources:
+                counts = self.ingest_observations(source)
+                for key, value in asdict(counts).items():
+                    setattr(total, key, getattr(total, key) + value)
+            return total
+        if result.status != "completed":
+            return IngestCounts()
         if result.completed_at < result.attempted_at:
             raise ValueError("Discovery completion precedes attempt")
         seen = set()
@@ -218,6 +227,51 @@ class Repository:
             }
             for job in result.jobs:
                 self._upsert_job(session, source.id, job, existing.get(job.source_job_id), counts)
+        return counts
+
+    def ingest_observations(self, result: SourceResult) -> IngestCounts:
+        """Selected publisher postings are NOT full snapshots: never close absent jobs
+        or advance monitoring health. Late observations cannot overwrite newer data.
+        """
+        _validate_snapshot(result)
+        counts = IngestCounts()
+        if result.error or not result.jobs:
+            return counts
+        config = result.config
+        insert = sqlite_insert if self.engine.dialect.name == "sqlite" else postgres_insert
+        with Session(self.engine) as session, session.begin():
+            session.execute(
+                insert(SourceRow)
+                .values(
+                    provider=config.source,
+                    region=config.region,
+                    board_id=config.board_id,
+                    company=config.company,
+                    consecutive_failures=0,
+                )
+                .on_conflict_do_nothing(index_elements=["provider", "region", "board_id"])
+            )
+            source = session.scalars(
+                select(SourceRow)
+                .where(
+                    SourceRow.provider == config.source,
+                    SourceRow.region == config.region,
+                    SourceRow.board_id == config.board_id,
+                )
+                .with_for_update()
+            ).one()
+            existing = {
+                row.source_job_id: row
+                for row in session.scalars(select(JobRow).where(JobRow.source_id == source.id))
+            }
+            for job in result.jobs:
+                row = existing.get(job.source_job_id)
+                if (source.last_success and job.fetched_at <= source.last_success) or (
+                    row is not None and job.fetched_at <= row.last_seen_at
+                ):
+                    counts.ignored_snapshots += 1
+                    continue
+                self._upsert_job(session, source.id, job, row, counts)
         return counts
 
     def jobs(self, *, include_closed: bool = False) -> list[Job]:

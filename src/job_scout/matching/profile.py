@@ -112,6 +112,7 @@ class SortRule(Settings):
 
 
 class Profile(Settings):
+    feedback_scope: str = Field(default="default", pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     filters: Filters = Field(default_factory=Filters)
     sort: Annotated[list[SortRule], Field(min_length=1)] = Field(
         default_factory=lambda: [SortRule(field="score", direction="desc")]

@@ -17,8 +17,8 @@ from pydantic import (
 NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 UTCDateTime = Annotated[AwareDatetime, AfterValidator(lambda value: value.astimezone(UTC))]
 Provider = Literal["greenhouse", "lever", "ashby", "smartrecruiters"]
-FeedProvider = Literal["arbeitnow", "himalayas"]
-FEED_PROVIDERS = {"arbeitnow", "himalayas"}
+FeedProvider = Literal["arbeitnow", "himalayas", "remotive"]
+FEED_PROVIDERS = {"arbeitnow", "himalayas", "remotive"}
 
 
 class SourceConfig(BaseModel):

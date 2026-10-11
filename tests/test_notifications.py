@@ -313,7 +313,7 @@ def test_migration_preserves_existing_jobs(setup):
     assert len(Repository(engine).jobs()) == 1
     assert DeliveryRepository(engine).status(recipient_key("123")) == []
     with Session(engine) as session:
-        assert session.scalar(select(SchemaVersion.version)) == 4
+        assert session.scalar(select(SchemaVersion.version)) == 6
 
 
 def test_additional_digest_keeps_history_and_sends_only_new_jobs(setup):

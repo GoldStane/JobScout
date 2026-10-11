@@ -1,0 +1,8 @@
+{
+  "query": {"original": "SEARCH_QUERY_SENTINEL", "more_results_available": false},
+  "web": {"results": [
+    {"title": "SEARCH_TITLE_SENTINEL", "description": "SEARCH_SNIPPET_SENTINEL", "url": "https://jobs.lever.co/example/1?tracking=SEARCH_URL_SENTINEL", "page_age": "1900-01-01"},
+    {"title": "SEARCH_TITLE_SENTINEL", "description": "SEARCH_SNIPPET_SENTINEL", "url": "https://boards.greenhouse.io/example/jobs/1"},
+    {"title": "SEARCH_TITLE_SENTINEL", "description": "SEARCH_SNIPPET_SENTINEL", "url": "https://jobs.ashbyhq.com/example/1"}
+  ]}
+}

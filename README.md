@@ -3,7 +3,7 @@
 A configurable job discovery and explainable matching service for opportunities
 worldwide, guided by a private candidate profile.
 
-**Status: M4 — Himalayas discovery added to the unified daily run.**
+**Status: M6 — additional coverage, scoped feedback and discovery health implemented.**
 Discover, persist and rank jobs without preconfigured companies. Existing ATS
 monitoring and Telegram delivery remain available locally or through GitHub Actions.
 Follow the [cloud deployment guide](docs/deployment.md) to configure your database,
@@ -67,7 +67,46 @@ never sends messages and does not claim its matches are previously undelivered.
 Routine HTTP request logs are suppressed.
 
 Existing databases must be upgraded with `job-scout db-migrate` before this release.
-Schema 4 adds only `job_links`; it preserves all jobs, boards and delivery history.
+Schema 6 adds discovery metrics, refresh scheduling and feedback alongside existing
+request budgets and identity links. It preserves jobs, boards and delivery history.
+
+## Coverage, feedback and health (M6)
+
+Enable the no-key Remotive provider with `providers.remotive.enabled: true` in
+`config/discovery.yaml`, then pass that file to `discover-jobs --config` or
+`run --discovery-config`. It adds remote jobs across employers, credits Remotive
+and preserves geographic restrictions. Its public feed is delayed by 24 hours.
+Refreshes default to once per 24 hours, with a persisted six-hour minimum; failures
+also consume the refresh interval. Dry-run uses recent cached jobs without fetching
+Remotive. Arbeitnow remains the default, requiring no employer list.
+
+```sh
+job-scout discovery-health --days 30
+job-scout source-health
+job-scout jobs
+# Copy a full job_key from jobs, match, or the discovery output:
+job-scout feedback irrelevant JOB_KEY
+job-scout feedback list
+job-scout feedback clear JOB_KEY
+```
+
+`irrelevant` hides a vacancy and verified aliases from new matching/digest plans.
+`relevant` records a positive review without overriding scores or eligibility.
+Feedback is reversible and scoped: set `feedback_scope: search-a` in a profile and
+pass `--scope search-a` to feedback commands to keep independent searches separate.
+The default scope is `default`. Use `match --include-dismissed` to inspect hidden
+jobs. Already prepared digests retain their saved content for reliable resumption.
+
+Health reports count requests, observed jobs, qualifying observations and newly
+stored records, with failures, pagination limits, last success and refresh due time.
+These measure the bounded sample, not total market coverage. Records can overlap
+across providers; repeated matches are not unique relevant vacancies. Existing daily
+Himalayas role rotation and Brave role/location rotation remain deterministic and
+bounded. No model API is required.
+
+See the [M6 test procedure](docs/testing-m6.md),
+[M6 behavior and limitations](docs/job-discovery.md#m6-coverage-feedback-and-health),
+and [GitHub Actions deployment](docs/deployment.md).
 
 ## Optional: add Himalayas remote jobs
 
@@ -99,16 +138,61 @@ postings are excluded from new observations. Data refreshes daily; avoid polling
 more frequently. See the [provider guide](docs/job-discovery.md#himalayas-m4) and
 [official API documentation](https://himalayas.app/docs/remote-jobs-api).
 
-M4 uses the existing schema 4 and adds backward-compatible JSON fields; no further
-schema migration is needed after M3. Update every runner before ingesting Himalayas
+M4 added backward-compatible JSON fields. This release requires schema 6 for
+request accounting and M6 operations, so existing databases need `db-migrate`. Update every runner before ingesting Himalayas
 jobs because older application versions do not recognize this provider.
+
+## Optional: search roles in a selected country (M5)
+
+Brave Search is an **opt-in, potentially billed API**. Free-feed operation still
+works without it. If you choose to use your own Brave account, export
+`BRAVE_SEARCH_API_KEY` securely and set `providers.brave.enabled: true` in your
+private discovery YAML. A key by itself does not enable the provider.
+Review [Brave’s current plans and storage terms](https://brave.com/search/api/).
+
+```sh
+job-scout db-migrate
+job-scout discover-jobs --config config/discovery.yaml --track selected_track --country Canada
+job-scout run --discovery-config config/discovery.yaml --country Canada
+```
+
+`--track` is optional; omit it to use the profile's primary/secondary roles.
+`--country` overrides the country for enabled search providers for this run. It
+switches an enabled Himalayas provider to search mode but never enables Brave or
+Himalayas. Use full country names; common aliases include `HK`, `US`, `GB`, `CA`,
+`AU`, `DE`, `FR`, `IT`, `ES`, `JP`, `SG`, `IN` and `CN`. Without an override, Brave
+uses its configured country or rotates through the profile's preferred regions.
+Arbeitnow remains a feed ranked locally; it cannot run a country search.
+
+Brave searches profile role phrases and location text on supported public ATS
+domains. This can discover on-site as well as remote opportunities at previously
+unknown employers. A country search targets relevant indexed pages; it is **not a
+verified job-location or work-authorization filter**. The returned posting's actual
+location remains visible, and existing profile filters still apply.
+
+Search URLs/snippets/titles stay transient. Only jobs independently fetched and
+verified through Greenhouse, Lever or Ashby enter storage, matching, registration
+and the daily digest. Unsupported links and stale index hits are discarded.
+Canonical ATS identities prevent rediscovery from generating repeat notifications.
+
+Default Brave caps are **3 search attempts/run, 6/day and 180/month**, including
+retries. UTC daily/monthly counters persist in your database and are shared by
+runners using it. Verification has separate request/runtime/board limits. These
+are request ceilings, not a dollar-price guarantee or an account-wide billing cap.
+Dry runs skip metered search and make no quota writes; free-feed/ATS previews
+continue normally. For a live search without sending messages, use `discover-jobs`.
+
+In GitHub Actions, add `BRAVE_SEARCH_API_KEY` as a secret and enable Brave in
+`JOBSCOUT_DISCOVERY_YAML`. No account, subscription or deployment is created by this
+implementation. See [the M5 guide](docs/job-discovery.md#brave-search-m5) for retention,
+budget semantics and limitations.
 
 ## Optional: register known employer boards
 
 Follow the [source discovery guide](docs/discovery.md). `company add <careers-url>`
 detects Greenhouse, Lever, and Ashby boards, validates their public endpoints, and
 activates unambiguous sources or stores a review candidate. Use `--dry-run` first.
-Existing databases need `job-scout db-migrate` for schema 4 before other commands.
+Existing databases need `job-scout db-migrate` for schema 6 before other commands.
 
 `run` and `ingest` now use the database registry, seeded once from existing YAML.
 Registered disabled sources stay disabled on subsequent seed imports. Use
@@ -279,13 +363,16 @@ Persistence rules:
 - Replaying a report, or ingesting an older source attempt after a newer one,
   does not change jobs or health. Source transactions serialize concurrent
   writers so repeated ingestion cannot create duplicate identities.
-- Schema revision 4 retains `sources`, `jobs`, and `schema_version`, and adds
+- Schema revision 6 adds `discovery_runs`, `discovery_schedule` and `job_feedback`.
+  These store aggregate counters, refresh deadlines and scoped relevance decisions.
+  Schema revision 5 adds `discovery_budgets` for atomic daily/monthly request counts.
+  It contains no search-result content or credentials. Revision 4 retains `sources`, `jobs`, and `schema_version`, and adds
   `digests`, `notification_log`, and `delivery_locks`. Job data
   stores canonical fields and selected source metadata as JSON, with indexed
   identity, freshness, and lifecycle fields in columns. No profiles or
   credentials are stored in job rows. Delivery snapshots contain rendered messages
   and hashed recipient/job identities, never bot tokens or full profiles.
-  `db-migrate` upgrades revisions 1, 2 and 3 without losing jobs/source or delivery history.
+  `db-migrate` upgrades revisions 1 through 5 without losing jobs/source or delivery history.
   Revision 3 added companies, discovery candidates and source registration metadata.
   Revision 4 adds durable feed-to-publisher identity links and verification timestamps.
   `db-init` does not silently alter existing tables.
@@ -418,7 +505,8 @@ is excluded; unknown eligibility is disclosed and remains eligible for inclusion
 
 Dry-run fetches feeds/boards and previews registration, but writes no jobs, health,
 identity links, source registrations, digest plans or delivery success and makes
-no Telegram requests. It requires schema 4 but no bot token.
+no Telegram requests. It requires schema 6 but no bot token. Brave search and Remotive refreshes are skipped
+in dry-run; recent cached Remotive jobs remain available.
 Set `TELEGRAM_CHAT_ID` for a preview that respects your delivery history;
 without it, all matches are treated as undelivered. A saved unfinished digest
 is previewed/resumed before any new collection.
@@ -508,5 +596,6 @@ No live employer or Telegram calls are required.
 - `cloud.py`: private cloud configuration and sanitized execution summaries.
 - `.github/workflows/`: offline CI with PostgreSQL, and scheduled/manual delivery.
 
-**Next: M5 — optional broader discovery with explicit provider terms and budgets.**
+**Next: evaluate measured coverage and feedback before expanding providers or matching rules.**
+The current roadmap ends at M6; no M7 is defined.
 See `AGENTS.md` and [the discovery guide](docs/job-discovery.md) for scope and limitations.

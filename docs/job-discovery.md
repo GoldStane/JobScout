@@ -1,4 +1,4 @@
-# Employer-independent job discovery (M1–M4)
+# Employer-independent job discovery (M1–M6)
 
 ## Audit and integration decisions
 
@@ -17,7 +17,7 @@ not provide keyword search here: the bounded feed is ranked locally.
 ## Start with zero companies
 
 After installing the project, initialize a fresh database, or use `db-migrate`
-for an existing revision 1/2/3 database. This release requires schema 4.
+for an existing revision 1/2/3/4/5 database. This release requires schema 6.
 
 ```sh
 job-scout db-init
@@ -211,7 +211,7 @@ Himalayas is disabled by default. Enable it in a private copy of
 `config/discovery.example.yaml` and pass that file using `discover-jobs --config`
 or `run --discovery-config`. Cloud runs accept the same YAML through the optional
 `JOBSCOUT_DISCOVERY_YAML` secret. No employer list or API credential is involved.
-`run --no-discovery` disables both feeds, and the existing matcher is shared.
+`run --no-discovery` disables all discovery providers, and the existing matcher is shared.
 
 ### Contract and safe collection
 
@@ -294,7 +294,242 @@ share one per-run ATS-validation budget and one daily digest/delivery history.
 M4 adds no DDL beyond M3's schema 4; new salary, timezone and attribution fields
 live in canonical job JSON and default safely for older rows.
 
+## Brave search (M5)
+
+### Opt-in setup and role/country queries
+
+The default still runs without a key. To opt in, enable `providers.brave.enabled`
+and export `BRAVE_SEARCH_API_KEY` through your environment or hosted secret store.
+Never put the key in YAML, command-line arguments, committed files or logs. The
+config schema rejects an `api_key` field. No subscriptions are purchased or keys
+provisioned. Verify your [current Brave plan and terms](https://brave.com/search/api/)
+before enabling metered requests.
+
+For a private discovery configuration:
+
+```yaml
+providers:
+  arbeitnow: {enabled: true}
+  himalayas: {enabled: false}
+  brave:
+    enabled: true
+    country: Canada
+    max_queries: 3
+    max_pages: 1
+    max_requests: 3
+    daily_request_limit: 6
+    monthly_request_limit: 180
+```
+
+Then run `job-scout discover-jobs --config config/discovery.yaml --country Canada`.
+Use `--profile` and optional `--track` to choose the role list. The same override
+works with `run --discovery-config ...`. Full country names work; the CLI and Brave
+configuration normalize common aliases (HK, US, GB/UK, CA, AU, DE, FR, IT, ES, JP,
+SG, IN, CN). Other short codes should be expanded to their full country name.
+This is an explicit search target, not a residence inferred from the environment.
+
+Brave uses one quoted role plus one location per query with an OR group of supported
+ATS `site:` domains. Roles come from the selected profile/track. Without a selected
+country it rotates the profile's preferred regions; with no regions it leaves the
+location unspecified. Empty role lists produce a clear error without making a
+metered request. A bounded daily rotation covers role/location combinations across
+runs, rather than generating all combinations in one run. No CV text, education,
+contact information or unrelated profile fields are sent to the search API.
+
+The API's `country` parameter is kept at `ALL`: it describes the search market,
+not a job's workplace. Location text goes in the query instead. Results are ranked
+with the existing matcher and retain publisher-reported locations. Search engines
+can return false positives; use profile location filters for additional screening.
+Himalayas's own country filter has different semantics (remote availability).
+
+### Retention boundary and publisher verification
+
+Brave [requires explicit storage rights](https://brave.com/search/api/) to retain
+search results. JobScout does not depend on such rights. Search responses and all
+lead-derived identities remain in memory; no search snippets, titles, timestamps,
+tracking URLs, query echoes or result objects are written to SQLite/PostgreSQL,
+registration audits, notification messages or report JSON. Index freshness never
+becomes a job publication date. Only aggregate operational counts are exposed.
+
+The resolver accepts exact posting URL patterns for Greenhouse, Lever (including
+EU) and Ashby. It constructs fixed public API requests with the existing adapters,
+validates all returned board/posting identities, and selects only independently
+corroborated postings. Both source and application URLs must agree with that job's
+ATS identity. Registration URLs are rebuilt from publisher-returned URLs; audit
+IDs also come from the publisher. Unverified links do not become review candidates.
+Brave credentials are confined to a separate search client and never sent to ATS
+hosts. Both clients pin public DNS targets, refuse redirects and bound responses.
+No arbitrary page crawling, browser scraping or application submission is used.
+
+Search-acquired jobs keep their canonical ATS provider/board/posting IDs, not a
+`brave` job identity. Publisher content goes through the existing normalization,
+repository, reconciliation, matcher and digest. Selected observations do not close
+other vacancies, advance full-board monitoring health, or overwrite newer records.
+Verified boards may register for future full monitoring; disabled/rejected boards
+remain excluded. Registration obeys the shared per-run new-board cap and reuses
+verification responses. Existing known employer display names are preserved; when
+an API does not supply a company name, the validated board identifier is displayed.
+
+### Budgets, failure handling and dry-run
+
+Per-run defaults: 3 search attempts, 3 queries, 1 page per query, 10 results per
+page, 5 distinct board verifications, 15 publisher requests, and 180 seconds total
+runtime (publisher work is additionally capped at 90 seconds). All values are
+validated and configurable. Pagination uses zero-based offsets through 9 and only
+continues when `query.more_results_available` is true. Duplicate pages stop paging.
+The [Brave API documentation](https://api-dashboard.search.brave.com/app/documentation/web-search/codes)
+describes these pagination and search parameters.
+
+Schema 5 adds only `discovery_budgets` with provider/time-window keys and integer
+request counts. `db-migrate` upgrades versions 1–4 without replacing jobs, boards,
+identity links or delivery history. Before each search attempt, a transaction
+reserves one unit in both UTC day and month windows. Defaults are 6/day and
+180/month. Reservations survive process restarts and serialize across concurrent
+runners on the same database. Failures/timeouts consume local reservations too;
+these conservative limits measure attempts, not the provider's billable successes.
+Changing profiles or API keys does not reset the shared counters. Separate databases
+and other applications are not covered by these local ceilings.
+
+Backoff, Retry-After and reported rate/quota windows are honored according to
+[Brave's rate-limit guide](https://api-dashboard.search.brave.com/documentation/guides/rate-limiting).
+Short windows pace subsequent requests; exhausted long windows stop further
+search. Invalid quota headers fail closed. The successful response that exhausted
+a quota still contributes its independently verified jobs. A failing publisher,
+Brave request or budget boundary cannot discard already verified jobs or suppress
+healthy free feeds/ATS monitoring. Stale or unsupported leads are counted as skips,
+not fabricated vacancies or provider outages.
+
+`--dry-run` skips Brave entirely: no search spend, publisher requests caused by
+Brave, budget writes, registrations, deliveries or job writes. Its output explicitly
+reports that metered search was skipped. Other enabled free feeds and monitored ATS
+boards retain their normal read-only previews. Use ordinary `discover-jobs` to test
+live metered discovery without Telegram delivery. Example synthetic output:
+
+```text
+brave: 1 unique observations · 1 matches · 1 requests · 0 expired
+  Publisher verification: 1 requests · 0 failed boards · 2 deferred
+```
+
+The JSON `providers` entries additionally expose page/query counts, provider errors,
+verification failures and insertion/update counts. Search-result content is absent.
+
+### Coverage and validation limits
+
+This broadens discovery beyond remote feeds, but only for indexed postings on the
+three supported ATS families. Custom careers sites, board-only hits, unsupported
+application URLs, stale index entries and ambiguous identities are excluded.
+Exact role/location phrases, index delays and finite budgets can miss suitable
+jobs. This does not guarantee Hong Kong or any other market's complete coverage.
+Existing profile/career-stage matcher limitations remain unchanged.
+
+Implementation contracts were checked against official Brave and publisher API
+documentation on 2026-10-11. Tests use synthetic results and mocked APIs, including
+non-retention sentinels, credential isolation, quota races, migration, partial
+failures and delivery idempotence. No live Brave account call or billing validation
+was performed as part of implementation.
+
 ## Next milestone
 
-M5 adds optional broader discovery with explicit source rights and budgets.
-Profile-schema and career-stage limitations described in the README remain.
+M6 is implemented below. Next, evaluate actual provider yield and feedback before
+choosing further provider or matching work; the roadmap defines no M7.
+
+
+## M6: coverage, feedback and health
+
+### Remotive
+
+The optional public feed uses `https://remotive.com/api/remote-jobs?limit=100`,
+with a configurable limit of 1–1000 and a bounded response size. It makes one
+request per refresh, no pagination or immediate retries. No employer configuration
+or API key is needed. Enable `providers.remotive.enabled` explicitly; defaults
+remain unchanged. `--country` does not add a country filter to this bounded feed.
+Remote geographic restrictions remain in `location_text`; remote does not imply
+worldwide eligibility. Use the shared profile matcher and explicit filters.
+
+[Official Remotive terms and contract](https://github.com/remotive-com/remote-jobs-api)
+were checked on 2026-10-11. The public feed is delayed by 24 hours, requires Remotive
+credit and a backlink, prohibits syndication to third-party job sites, and advises
+at most four requests daily. Do not turn the private digest into a public job
+syndication service or gate listings behind email collection. No paid API is used.
+
+`refresh_hours` defaults to 24 and cannot be below 6. A transactional database
+reservation occurs before fetching, so concurrent runners, failures and crashes
+cannot evade the cooldown. Use the same persistent database across all runners;
+separate databases do not share a quota. A failed refresh waits until next due,
+including 429 responses. No force-refresh flag bypasses this safeguard.
+
+Before the next refresh, recent stored Remotive observations can still enter the
+shared matching/digest flow. Cached observations keep their original fetch times,
+never update ingestion/source success or increase observed-job metrics. Only rows
+fetched within the configured refresh interval are reused. Dry-run never reserves
+or fetches Remotive; it reads this cache, so a new database has no Remotive preview
+until its first normal discovery. Other free providers still support live previews.
+Bounded feeds cannot prove absent jobs are closed, and cached listings may expire.
+
+Listing URLs are allowlisted HTTPS Remotive URLs and remain `View listing` links.
+Attribution links back to each listing, including after verified ATS reconciliation.
+Descriptions become safe text; supplied salary and geographic text are retained.
+Dates without timezone retain their raw source value but have unknown canonical
+`posted_at`; no UTC timezone is invented. Malformed items are counted and skipped.
+
+### Health and efficiency
+
+`job-scout discovery-health --days 30` reads persisted telemetry (1–365 day window).
+It includes per-provider totals for requests, publisher-verification requests,
+queries/pages, observations, qualifying observations, inserted/updated rows,
+invalid/expired items and page-limited runs. It reports run outcomes, last attempt,
+last successful collection, last collection status and the next scheduled refresh.
+Cached runs do not reset a previous collection failure. `source-health` retains
+board/feed error diagnostics and consecutive failures.
+
+`new_records_per_100_requests` divides inserted source records by discovery plus
+publisher-verification requests. ATS registration requests are separate and excluded.
+This is an operational yield metric, not internet coverage, unique cross-provider
+vacancies or billing charges. Qualifying observations use the current profile's
+score threshold and eligibility before manual feedback; repeated observations can
+count again. Comparing periods with different profiles/budgets requires care.
+Metrics are recorded after ingestion in ordinary discovery and daily runs, even
+if subsequent Telegram delivery fails. A crash between ingestion and metrics can
+leave an unrecorded run; they are diagnostics, not financial accounting.
+
+Only allowlisted aggregate counts, controlled statuses and timestamps are stored.
+No Brave query, search URL, snippet, response object or profile is added to telemetry.
+Dry-run writes no telemetry. Replayed provider results are idempotent. History
+remains in the database; `--days` filters reports rather than deleting old rows.
+The Actions **health** mode prints safe provider counts without profile/job text.
+
+### Relevance feedback
+
+`jobs`, `match` and discovery matches expose stable `job_key` identifiers. Use:
+
+```sh
+job-scout feedback irrelevant JOB_KEY
+job-scout feedback relevant JOB_KEY
+job-scout feedback list
+job-scout feedback clear JOB_KEY
+```
+
+Only stored job keys are accepted. `irrelevant` suppresses new recommendations,
+including verified equivalent occurrences. No fuzzy company/title suppression is
+performed. `relevant` records a positive judgment and removes that occurrence's
+negative judgment, without boosting scores or overriding hard eligibility checks.
+If any linked occurrence remains dismissed, the group remains hidden; clear its
+feedback too. No automatic model training, application submission or deletion of
+job/delivery history occurs.
+
+Profiles may set `feedback_scope: search-a`; feedback commands must then include
+`--scope search-a`. Use distinct scopes for independent profiles. Changing skills
+or interests does not silently reset feedback. Tracks share their profile scope.
+`match --include-dismissed` supports review. Feedback affects newly prepared
+results; an unfinished saved digest resumes its existing content unchanged.
+
+### Migration and validation
+
+Back up the database and run `job-scout db-migrate`. Schema 6 adds only
+`discovery_runs`, `discovery_schedule` and `job_feedback`; jobs, registrations,
+identity links, request budgets and delivery history remain intact. Update all
+runners together. A fresh database can use `db-init`.
+
+See [M6 testing](testing-m6.md) for offline acceptance checks and an optional
+one-request Remotive smoke test. Live coverage and production connectivity have
+not been established by synthetic fixtures.

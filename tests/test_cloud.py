@@ -194,3 +194,38 @@ def test_invalid_discovery_secret_is_private(environment, monkeypatch, capsys):
     monkeypatch.setenv("JOBSCOUT_DISCOVERY_YAML", "secret: do-not-echo-this")
     assert cloud.main() == 2
     assert "do-not-echo-this" not in capsys.readouterr().out
+
+
+def test_cloud_health_requires_database_only(environment, monkeypatch):
+    monkeypatch.setenv("JOBSCOUT_MODE", "health")
+    for name in ("TELEGRAM_CHAT_ID", "TELEGRAM_BOT_TOKEN", "JOBSCOUT_PROFILE_YAML"):
+        monkeypatch.delenv(name)
+    calls = []
+    monkeypatch.setattr(cloud, "invoke", lambda args: calls.append(args) or 0)
+    assert cloud.main() == 0 and calls == [["discovery-health"]]
+
+
+def test_cloud_health_only_emits_allowlisted_counters(monkeypatch, capsys):
+    import json
+
+    def fake_cli(args):
+        print(
+            json.dumps(
+                [
+                    {
+                        "provider": "remotive",
+                        "runs": 2,
+                        "failed_or_partial": 1,
+                        "private": "PRIVATE_SENTINEL",
+                        "totals": {"requests": 1, "inserted": 3, "secret": "PRIVATE_SENTINEL"},
+                    }
+                ]
+            )
+        )
+        return 0
+
+    monkeypatch.setattr(cloud, "cli_main", fake_cli)
+    assert cloud.invoke(["discovery-health"]) == 0
+    output = capsys.readouterr().out
+    assert "PRIVATE_SENTINEL" not in output
+    assert json.loads(output)["discovery_counts"]["remotive"]["inserted"] == 3

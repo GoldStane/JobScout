@@ -1,4 +1,4 @@
-# Cloud deployment (unified daily run, M3–M4)
+# Cloud deployment (unified daily run, M3–M6)
 
 GitHub Actions starts a temporary Python runner, discovers feed jobs and monitors employer APIs, updates
 persistent PostgreSQL, and calls Telegram. The runner then stops. Telegram does
@@ -55,7 +55,33 @@ Himalayas can be enabled through `providers.himalayas.enabled: true` in
 See [the provider guide](job-discovery.md#himalayas-m4). It needs no additional
 credential, and stays disabled when the optional configuration is absent.
 
-## Discovery upgrade (schema 4)
+Brave is a separate optional metered provider. Add the `BRAVE_SEARCH_API_KEY`
+Actions secret and set `providers.brave.enabled: true` in `JOBSCOUT_DISCOVERY_YAML`
+to opt in. Queries use the selected profile's role list and configured country or
+preferred regions. Defaults cap attempts at 3/run, 6/UTC day and 180/UTC month,
+shared through the database. Preview mode skips Brave without spending or updating
+its counters. The normal scheduled send can use it after explicit configuration.
+See [M5 retention and budgeting](job-discovery.md#brave-search-m5).
+
+Remotive can be enabled without another secret:
+
+```yaml
+providers:
+  arbeitnow: {enabled: true}
+  himalayas: {enabled: false}
+  remotive: {enabled: true, limit: 100, refresh_hours: 24}
+  brave: {enabled: false}
+```
+
+Paste this into `JOBSCOUT_DISCOVERY_YAML`, or merge the Remotive block into your
+existing configuration. The shared PostgreSQL cooldown prevents duplicate refreshes
+across catch-up/manual runs. A preview before the first normal send has no cached
+Remotive jobs. To test Remotive without sending Telegram, use local `discover-jobs`
+with a separate test database as described in [M6 testing](testing-m6.md).
+For feedback against cloud jobs, run the local `feedback` command with the same
+cloud DATABASE_URL and the profile's `feedback_scope`; no bot token is needed.
+
+## Discovery upgrade (schema 6)
 
 Before using this release against an existing database, back it up and run mode
 **migrate**. The database registry is now canonical. Existing companies YAML seeds
@@ -65,7 +91,8 @@ or disable sources using the same cloud DATABASE_URL from your local CLI.
 `JOBSCOUT_COMPANIES_YAML` is optional even on an empty registry: daily runs now
 include Arbeitnow discovery. Optional `JOBSCOUT_DISCOVERY_YAML` supplies feed and
 registration budgets using `config/discovery.example.yaml`. Defaults require no
-API key. Schema 4 adds only the durable `job_links` table; the migration preserves
+API key. Schema 6 adds telemetry, refresh schedules and feedback alongside existing
+request-budget counters and durable `job_links`; the migration preserves
 jobs, source registrations and delivery history. Upgrade before enabling sends.
 
 ## 3. Add repository secrets
@@ -81,8 +108,9 @@ secret**. Add each name exactly:
 - `JOBSCOUT_COMPANIES_YAML` (optional): employer board seeds; omit for feed-only
   discovery or database-registered boards.
 - `JOBSCOUT_DISCOVERY_YAML` (optional): feed and registration settings. Omit for
-  bounded defaults. For ATS-only runs, disable both providers with
-  `providers.arbeitnow.enabled: false` and `providers.himalayas.enabled: false`.
+  bounded defaults. For ATS-only runs, disable all providers with
+  `providers.arbeitnow.enabled: false`, `providers.himalayas.enabled: false`,
+  `providers.brave.enabled: false`, and `providers.remotive.enabled: false`.
 - `JOBSCOUT_PROFILE_YAML`: paste the entire contents of your working private
   `config/profile.yaml`.
 
@@ -101,14 +129,15 @@ Open **Actions → Daily search → Run workflow**. Select the default branch, c
 mode **initialize**, leave **retry_uncertain** unchecked, and run it. Wait for a
 green result. This creates the schema in the DATABASE_URL database.
 
-For an existing revision-1, revision-2 or revision-3 JobScout cloud database, back it up first and use mode
+For an existing revision-1 through revision-5 JobScout cloud database, back it up first and use mode
 **migrate** instead. Initialization is safe to repeat but does not silently upgrade
 old tables. Do not run migrations against unrelated databases.
 
 ## 5. Preview, then send manually
 
-Run Daily search again with mode **preview** (the default). This fetches public
-feeds/boards and reads the cloud database but sends no Telegram messages and writes
+Run Daily search again with mode **preview** (the default). This fetches enabled public
+feeds/boards (Brave search and Remotive refreshes are skipped; recent cached
+Remotive jobs remain eligible) and reads the cloud database but sends no Telegram messages and writes
 no jobs, identity links, registrations or delivery success. A successful summary includes `dry_run`. Cloud previews
 intentionally omit the message body from logs.
 
@@ -128,6 +157,8 @@ When the preview is satisfactory, manually run mode **send**. This makes a real
 Telegram delivery and records confirmed message parts in PostgreSQL. Check the
 chat. Rerunning send on the same local date returns `already_sent` after completion.
 Mode **status** shows counts of recorded notification-part statuses without sending.
+Mode **health** shows the last 30 days of discovery request, new-record and failure
+counts. It requires only DATABASE_URL, and makes no provider or Telegram requests.
 
 ### Additional manual digests on the same day
 
@@ -201,7 +232,8 @@ notifications depend on your account notification preferences.
   also need today's digest. Confirmed parts remain suppressed.
 
 For private diagnostics, use your local CLI with the same cloud DATABASE_URL and
-chat ID: `job-scout delivery-status` and `job-scout source-health`. Do not paste
+chat ID: `job-scout delivery-status`, `job-scout source-health`, and
+`job-scout discovery-health --days 30`. Do not paste
 private output into a public issue. Rotate compromised credentials in their
 provider and update the matching repository secret.
 

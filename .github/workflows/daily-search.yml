@@ -22,6 +22,7 @@ name: Daily search
           - migrate
           - status
           - health
+          - database
       additional:
         description: 'Send/preview again today, keeping already-delivered jobs suppressed'
         type: boolean
@@ -62,7 +63,6 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          JOBSCOUT_COMPANIES_YAML: ${{ secrets.JOBSCOUT_COMPANIES_YAML }}
           JOBSCOUT_PROFILE_YAML: ${{ secrets.JOBSCOUT_PROFILE_YAML }}
           BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
           JOBSCOUT_DISCOVERY_YAML: ${{ secrets.JOBSCOUT_DISCOVERY_YAML }}

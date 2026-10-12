@@ -58,6 +58,14 @@ async def run_digest(
     saved = deliveries.existing(recipient, local_date)
     if saved and saved.complete:
         if not additional:
+            if dry_run:
+                return RunResult(
+                    [
+                        "A digest was already delivered today. Use --additional --dry-run "
+                        "to preview remaining undelivered matches."
+                    ],
+                    "dry_run",
+                )
             return RunResult([], "already_sent")
         saved = None
     report = None

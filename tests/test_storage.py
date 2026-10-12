@@ -238,7 +238,7 @@ def test_uninitialized_schema_requires_explicit_setup(tmp_path):
 def test_database_url_environment(monkeypatch, tmp_path):
     path = tmp_path / "nested" / "jobs.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{path}")
-    engine = open_database()
+    engine = open_database(f"sqlite:///{path}")
     try:
         initialize_database(engine)
         assert path.exists()

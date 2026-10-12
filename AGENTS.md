@@ -1,11 +1,11 @@
 # AGENTS.md — JobScout
 
 > Instructions for Codex and other coding agents working in the existing JobScout repository.
-> **Architecture revision:** employer-independent vacancy discovery is the primary product workflow. A pre-supplied employer/ATS list must **not** be required for a successful run.
+> **Architecture revision:** employer-independent vacancy discovery remains the primary product workflow, complemented by proactive **company-first discovery**. A pre-supplied employer/ATS list must **not** be required. **PostgreSQL is the authoritative hosted registry for automatically discovered employers and ATS boards; `companies.yaml` is an optional seed file, not a continuously rewritten source of truth.**
 
 ## 1. Product objective and non-negotiable requirements
 
-Build **JobScout**, a low-cost, autonomous service that discovers job opportunities worldwide for the supplied profile, evaluates fit against a private candidate profile/CV, and sends a ranked daily digest (initially by Telegram). It must work without the user's computer running continuously.
+Build **JobScout**, a low-cost, autonomous service that discovers graduate jobs and internships worldwide, evaluates fit against a private candidate profile/CV, and sends a ranked daily digest (initially by Telegram). It must work without the user's computer running continuously.
 
 **The user's core intent:** they should specify *what jobs they are looking for*, **not which companies to search**. Finding employers and ATS boards is the software's responsibility.
 
@@ -22,16 +22,18 @@ With an **empty employer registry** and **no `employers.txt`**, an ordinary `job
 
 The current command `job-scout discover-sources --input employers.txt` is **manual/batch ATS URL registration**, not employer-independent job discovery. **Preserve it** as an optional bootstrap/admin tool; do not rely on it in the main workflow or describe it as complete automatic discovery.
 
-### Profile-independent behavior and privacy
+**Additional target:** a future `job-scout discover-companies` command should identify previously unknown employers relevant to the user's technical interests, locate their *official* careers pages, recognize and verify supported ATS boards, and register verified boards in the database. A company may be registered even if it has **no currently matching vacancy**; subsequent ATS monitoring can find future roles. This extends, rather than replaces, job-first discovery.
 
-- Support profiles across professions, industries, educational backgrounds and career stages. No particular degree, field of study, enrollment status, graduation year, skill set or work history is assumed.
-- Derive target roles, skills, seniority, employment types, locations, remote-work preferences, compensation priorities and ranking weights from the supplied profile and search settings. Do not hard-code one candidate's interests as product defaults or eligibility rules.
-- Education and graduation information is optional. Evaluate it only where a posting explicitly makes it relevant; missing information remains unknown. Profiles without a degree or current enrollment must remain valid.
-- Evaluate seniority relative to the profile's stated goals and qualifications. A senior title is not a universal reason to reject a posting; entry-level roles are not a universal preference.
-- Treat sponsorship, work authorization, eligibility and relocation feasibility as explicit or **unknown**, never silently inferred. Never fabricate salaries or other missing facts.
-- Take digest time and timezone from configuration. Do not infer a candidate's residence or preferred region from repository examples or the execution environment.
-- Keep all actual candidate details, CVs, contact information and credentials out of committed documentation, examples and fixtures. Use fictional examples that cannot reconstruct a real person's profile.
-- When existing implementation restricts profile types, document the limitation and generalize the relevant schema, rules and tests before claiming universal support. Preserve compatibility with existing private profiles.
+### Intended candidate profile
+
+- Final-year Computer and Data Engineering student; graduation date and enrollment status are configurable rather than assumed.
+- Technical background: C++, Python, Linux, algorithms/data structures, CMake, SQL/data analysis, embedded systems, ML.
+- Highest-priority roles: quantitative developer, trading infrastructure, low-latency/C++, systems/software infrastructure, Linux, embedded/driver engineer.
+- Secondary roles: quantitative analyst, machine learning engineer, relevant general software-engineering positions.
+- Graduate/new-grad, internship, and entry-level roles worldwide. Europe preferred when other factors are comparable, but Hong Kong and other locations remain in scope. Salary/career potential matters; never fabricate salaries.
+- Treat visa sponsorship, work authorization, graduation-window eligibility and relocation feasibility as explicit or **unknown**, never silently inferred.
+
+Do not put the user's real CV, personally identifying information, access tokens or private contact details in committed files. Commit only sanitized example profiles and configuration.
 
 ## 2. Existing implementation: preserve and extend
 
@@ -47,51 +49,53 @@ This reads known ATS board URLs (for example Lever, Greenhouse and Ashby) and at
 
 **Migration rule:** extend working components, do not restart the project or rewrite them without need. Preserve current commands and persistent data. Use additive, backward-compatible schema changes; document migrations. Preserve verified manually added company sources.
 
+If `config/companies.yaml` already exists, keep supporting it as a **manual/seed input**. Its records should be imported/upserted into persistent storage, not required for operation and not rewritten by unattended workflows. Do not put growing employer lists in GitHub Secrets, and do not commit automatic edits to the repository on every scheduled run.
+
 Do **not** respond to this architectural change by building another employer-list importer, hard-coding a large company list, or merely extending ATS adapters. **Implement discovery of job postings with zero preconfigured companies first.**
 
 ## 3. Revised system architecture
 
-Use a Python modular monolith with two distinct acquisition mechanisms:
+Use a Python modular monolith with **three complementary acquisition mechanisms**:
 
-1. **Global discovery (NEW; primary entry point):** independently searches general job feeds/APIs, optional permitted search-index services and other authorized sources. Input is a search profile/query configuration; output is job candidates across unknown employers.
-2. **ATS monitoring (EXISTING; complementary):** periodically fetches full public postings for already registered employer boards using Greenhouse, Lever, Ashby, etc.
+1. **Job-first global discovery (primary):** independently searches general job feeds/APIs, optional permitted search-index services and other authorized sources. Output is actual job candidates across unknown employers; these can be ranked **immediately**.
+2. **Company-first discovery (new, staged feature):** independently searches for **relevant companies**, not just currently open jobs. Output is company candidates and, after verification, their ATS board identifiers. A company without a suitable opening today can still be useful to monitor tomorrow.
+3. **ATS monitoring (existing):** periodically fetches full public postings for verified employer boards from Greenhouse, Lever, Ashby, SmartRecruiters where supported, etc.
 
-Discovered jobs enter matching and persistence **immediately**. Recognized ATS URLs additionally enter an auto-registration workflow, increasing direct-monitoring coverage over time.
+Both discovery paths expand the **same persistent ATS source registry**. The monitoring path consumes that registry; it does not require a version-controlled employer list or a GitHub secret containing employer IDs.
 
 ```text
-private candidate profile + search settings
-               |
-               v
-     Query generator / scheduler
-               |
-               v
- GLOBAL DISCOVERY (without employer list)
-   | public job feed APIs (Arbeitnow, Himalayas, later others)
-   | optionally authorized web-search API (Brave, etc.)
-   | optionally RSS / opted-in job alert emails
-               |
-               v
-     DiscoveredJob candidates
-               |
-       +-------+---------------------+
-       |                             |
-       v                             v
- Normalize / persist / match     ATS URL resolution
-       |                             |
-       v                             v
- Ranked daily digest            Validate board identity
-                                     |
-                                     v
-                              Register ATS source
-                                     |
-                                     v
-                          MONITOR known ATS boards
-                                     |
-                                     v
-                     Normalize / persist / match
-                                     |
-                                     v
-                            Same daily digest
+              private candidate profile + preferences
+                              |
+                    query scheduling/budgets
+                              |
+               +--------------+----------------+
+               |                               |
+               v                               v
+     JOB-FIRST DISCOVERY             COMPANY-FIRST DISCOVERY
+   general job APIs/feeds          permitted search API / indexes
+   ATS-domain web search           find relevant employers + sites
+               |                               |
+               v                               v
+      discovered vacancies           company candidates
+               |                               |
+          +----+--------+                      v
+          |             |             locate official careers page
+          v             |             and supported ATS URLs
+  normalize/store/      |                      |
+  match immediately     +---------+------------+
+          |                       |
+          v                       v
+     daily digest          verify ATS board + identity
+                                  |
+                                  v
+                       PostgreSQL company/source registry
+                          (optional YAML seed import)
+                                  |
+                                  v
+                        existing ATS API monitoring
+                                  |
+                                  v
+                         same jobs/matcher/digest
 ```
 
 Principles:
@@ -99,7 +103,8 @@ Principles:
 - The two paths converge at a **common canonical job model, repository, deduplication engine and matcher**.
 - They have separate failure boundaries; broken global discovery must not suppress known-board monitoring, and vice versa.
 - Never assume a search result or aggregator link is the employer's direct application URL.
-- Auto-registering employers is a **benefit** of discovery, not a prerequisite for recommending a job.
+- Auto-registering employers is a **benefit** of job-first discovery, not a prerequisite for recommending a job. Company-first discovery deliberately registers *relevant verified employers* even without a matching vacancy.
+- PostgreSQL-backed `companies`/`sources` are authoritative in hosted operation; `companies.yaml` may seed or override only explicitly documented user-managed settings, never silently discard database-discovered boards.
 - No guarantee of discovering every vacancy on the internet; measure unique, relevant, actionable coverage instead.
 
 ### Recommended layout (adapt to the existing repository)
@@ -116,7 +121,11 @@ src/job_scout/
 │   │   ├── himalayas.py         # second: searchable remote jobs feed
 │   │   └── brave.py             # optional, opt-in, metered search API
 │   ├── ats_detection.py         # identify supported ATS links
-│   └── registration.py          # safely validate/register discovered boards
+│   ├── registration.py          # shared validation/upsert for all discovery paths
+│   └── companies/              # introduced for company-first discovery
+│       ├── search.py           # find potential employers via permitted sources
+│       ├── careers.py          # discover official careers pages/ATS links
+│       └── validation.py       # employer-to-board identity verification
 ├── sources/                     # existing employer-specific ATS adapters
 │   ├── base.py
 │   ├── greenhouse.py
@@ -154,6 +163,8 @@ class DiscoveryProvider(Protocol):
 
 A `DiscoveryPage` includes a list of `DiscoveredJob` records and an optional provider-specific next cursor/page plus provenance and collection metadata. Exact names may differ, but preserve the separation of concerns.
 
+**Company-first discovery is distinct from searching for jobs.** A future `CompanyDiscoveryProvider` may accept a `CompanySearchQuery` and return company candidates (name, verified/claimed official site, industry/technical relevance evidence, provenance, confidence). The orchestrator must never feed unverified company names directly into ATS APIs as guessed board IDs. It should resolve an official careers page, find candidate board links, reuse the same ATS detector/validator, then persist verified source identities through the existing repository layer. Search-result data must be treated as transient when provider terms restrict retention.
+
 Model a discovered candidate with at least:
 
 - Origin provider; provider job ID/GUID (when available); provider listing URL.
@@ -171,7 +182,7 @@ Model a discovered candidate with at least:
 1. **Arbeitnow — first MVP provider:** `https://www.arbeitnow.com/api/job-board-api` (public jobs aggregated across employers, mainly Europe). Official description: https://www.arbeitnow.com/blog/job-board-api . Verify the actual response/pagination schema with a bounded sample or fixtures before writing the adapter. Do not assume every result exposes an original ATS link.
 2. **Himalayas — second provider:** `https://himalayas.app/jobs/api` and `https://himalayas.app/jobs/api/search` for remote jobs. Official docs: https://himalayas.app/docs/remote-jobs-api . Search supports keyword filters and page-based results; browse supports opaque `nextCursor` pagination, with up to 20 records per page. Prefer cursor pagination on browse; do not generate or parse cursor contents. Credit Himalayas and link back as required by its API terms.
 3. **Additional opt-in providers:** Jobicy, Remotive, Adzuna, RSS feeds, permitted job alerts. Add only after validating coverage, terms and quotas. **Some free feeds return only aggregator URLs**: e.g., Jobicy's public API does not promise free direct ATS application links. Never silently enable paid/commercial endpoints.
-4. **Web search for ATS/job URL discovery — optional second phase:** Brave Search API or another authorized search-index API. Search for indexed job postings independently of employer names, using role, skill and career-level terms drawn from the supplied profile alongside a supported ATS domain filter. Search results are **ephemeral discovery leads**, not a licensed persistent job database: obey API storage rights and independently re-fetch/verify candidate job information from permitted publisher endpoints before persisting. Brave API credentials/costs and terms are opt-in; do not require this service for baseline success. Docs: https://brave.com/search/api/ .
+4. **Web search for ATS/job URL discovery — optional second phase:** Brave Search API or another authorized search-index API. Search for indexed job postings independently of employer names, e.g. `site:jobs.ashbyhq.com "C++" "intern"` or `site:jobs.lever.co "graduate" "systems engineer"`. Search results are **ephemeral discovery leads**, not a licensed persistent job database: obey API storage rights and independently re-fetch/verify candidate job information from permitted publisher endpoints before persisting. Brave API credentials/costs and terms are opt-in; do not require this service for baseline success. Docs: https://brave.com/search/api/ .
 
 Never claim a public ATS API (Greenhouse, Lever, Ashby) supports searching all employers; those APIs are typically employer-board-specific and are used **after** discovering a board identifier.
 
@@ -186,11 +197,15 @@ providers:
   brave: {enabled: false}      # opt-in; API key/billing may be required
 
 search_profiles:
-  selected_track:
-    titles: []  # Populate from the supplied profile; no default profession.
+  quant:
+    titles: ["quantitative developer", "trading systems engineer", "low latency developer"]
+  systems:
+    titles: ["systems software engineer", "C++ engineer", "Linux engineer"]
+  general:
+    titles: ["graduate software engineer", "software engineering intern"]
 
-career_levels: []  # No implicit career-stage restriction.
-locations: []  # No implicit geographic restriction.
+career_levels: ["intern", "internship", "graduate", "new grad", "entry level"]
+locations: ["worldwide"]
 
 limits:
   max_queries_per_run: 10
@@ -198,14 +213,18 @@ limits:
   max_new_boards_per_run: 20
 ```
 
-This is an illustrative target configuration, not a claim that every field is already implemented. Validate supported fields at load time and derive omitted preferences from the supplied profile without inventing candidate facts. **Provider-specific settings must be configurable, not hard-coded into business logic.** Some feeds have no keyword search: the adapter may collect a bounded feed and let the common matcher filter it.
+The values are illustrative and must be validated at load time. **Provider-specific settings must be configurable, not hard-coded into business logic.** Some feeds have no keyword search: the adapter may collect a bounded feed and let the common matcher filter it.
 
 - Generate a compact, explainable set of queries, not the Cartesian product of every role × location × seniority × ATS domain.
 - Rotate query families and periodically retry useful queries, instead of making identical expensive requests every day.
 - Set a per-provider request/page budget, pagination stop condition and explicit maximum runtime.
 - Prefer recent/new postings when supported, but do not equate a search engine's indexing date with the job's actual posting date.
-- Maintain profile-driven career-track relevance rules; no role label or career stage is universally required or excluded.
+- Maintain career-track-specific relevance rules; do not exclude a role simply because its title does not literally contain `intern` or `graduate`.
 - No paid LLM, embeddings or model-powered query generation is necessary for initial discovery.
+
+### Separate company-discovery queries (later milestone)
+
+Company discovery should also derive **industry and engineering-domain** searches from the profile, such as `proprietary trading firms C++ engineer Europe`, `low-latency systems companies`, or `GPU driver development companies`. These return *employers*, not only active graduate vacancy pages. Do not treat a single search result as proof of a company's identity, ATS affiliation, graduate hiring practices or current job openings. Use bounded query rotation and measure verified new boards per request; run company-first searches less frequently (initial target: weekly).
 
 ## 6. Automatic ATS detection and registration
 
@@ -221,7 +240,19 @@ For each discovered job **that actually contains a suitable employer/ATS link**:
 6. Register verified new boards idempotently, recording provenance, validation time and collection health; otherwise set `pending_review` or `rejected` with an explanatory reason.
 7. Include verified boards in future normal ATS-monitoring runs.
 
-**Do not automatically crawl arbitrary external websites** to chase a company name, and do not auto-register unknown or ambiguous domains. Deduplicate candidates before making validation requests. Cap new-board validations per run.
+**Do not broadly crawl arbitrary external websites**. The staged company-first workflow may visit *verified official employer careers landing pages* and a small, explicitly bounded number of allowed linked pages to locate ATS URLs, with URL safety, terms, robots restrictions where applicable, timeouts, and rate limits. Do not auto-register unknown or ambiguous domains. Deduplicate candidates before validating boards. Cap company searches, site fetches and new-board validations per run.
+
+### Company-first discovery workflow (staged future milestone)
+
+1. Generate a small set of employer-focused searches from the user's quant/C++/systems/embedded interests, locations and search budget; use an authorized search API or other permitted company directory. **No manually supplied employers are required.**
+2. Extract likely organizations and candidate official websites. Normalize names/domains and deduplicate against the database. Record permissible provenance and relevance evidence.
+3. Confirm the likely official company identity/site before using it. Prefer following a clearly linked official `Careers`/`Jobs` page; if unavailable, optionally use targeted searches such as `"<company>" site:jobs.ashbyhq.com` or the equivalent supported ATS domain.
+4. Extract **candidate** ATS board URLs/identifiers only from observed links/search leads; do not manufacture identifiers from company names. Support Greenhouse, Lever, Ashby and SmartRecruiters as their adapters become available, plus an `unsupported_portal` outcome for Workday/custom sites.
+5. Reuse existing ATS URL detection and endpoint validation; cross-check employer name, branding, official careers-page links or other reliable ownership signals. An API 200 response alone is insufficient for identity confirmation.
+6. Upsert validated `companies` and `sources` **transactionally and idempotently** in the persistent database. Record origin (`company_search`, `job_discovery`, `manual_seed`, etc.), verification evidence if retention is permitted, `verified_at`, health and state (`candidate`, `verified`, `pending_review`, `rejected`, `unsupported`). Avoid duplicating a company with several brands or distinct legal names without evidence.
+7. Enroll verified boards in subsequent ATS monitoring regardless of whether their *current* postings match the profile. Keep unresolved candidates for later review/retries where storage is permitted. Do not generate a user job alert merely because a company was discovered.
+
+Do not block job-first discovery on company-first results. Keep all external search access opt-in when a provider needs credentials, billing or additional contractual permissions.
 
 ### URL safety
 
@@ -249,15 +280,28 @@ Prefer a relationship such as:
 jobs                  # canonical opportunity
 job_occurrences       # this same job appearing on provider A, provider B, ATS C
 sources               # registered employer ATS boards (existing concept)
-companies             # normalized company identity, if needed
+companies             # persistent normalized company identity (authoritative)
 match_results
 notification_log
 discovery_queries      # schedule, provider, query, last run, results, budget
 (discovery_runs)       # optionally history/error/coverage metrics
-(discovery_candidates) # only for candidates whose retention is permitted
+(discovery_candidates) # job candidates whose retention is permitted
+(company_candidates)   # employer candidates and allowed verification metadata
 ```
 
 **Only introduce the tables genuinely needed by the current increment.** Do not destroy or rename existing tables in place without a migration strategy. Keeping `job_occurrences` can simplify linking the same job discovered through an aggregator and later through an ATS.
+
+### Authoritative employer registry: Option B (required target design)
+
+- **PostgreSQL is the source of truth for deployed monitoring.** Store discovered company records and ATS board registrations in persistent `companies` and `sources` tables. A hosted database such as Neon may be used within an approved free tier; do **not** provision an account or incur charges without explicit user approval. Local development may use SQLite with the same repository logic and migrations.
+- Treat `companies.yaml` as an **optional hand-maintained seed/allowlist**. Load it idempotently to add/validate known boards, preserving the original `source`, `company`, `board_id`, `region`, `enabled` schema. A missing or empty YAML file must not disable discovery or prevent monitoring already-registered DB sources.
+- **Runtime registry loading:** after optional seed import, read enabled, verified ATS sources **from the database**, not only from YAML. Database-discovered boards must survive GitHub Actions runner teardown and subsequent runs.
+- **Do not overwrite** DB-discovered sources, validation state, timestamps or explicit admin disables when importing seed YAML again. Document a clear precedence policy and provide explicit administrative commands for disabling/enabling/removing sources. Never silently re-enable a disabled board because it remains in a seed file.
+- A company may own multiple ATS boards, regions or brands; use a normalized company identity and a distinct `sources` identity. Enforce a unique constraint covering at least `(provider, region, board_id)` (or provider-specific canonical equivalent) and an atomic upsert under concurrent scheduled runs. Normalize board tokens carefully without assuming case-insensitivity or that a company has one board.
+- The registry should persist company identifiers/official website where verified, source URLs, provider + region + board ID, registration origin, discovered/verified timestamps, active/pending/disabled status, last attempt/success/error and review notes as applicable. Do not claim `verified` from a plausible URL alone.
+- Use additive schema migrations and preserve existing rows. If an existing `sources` table already serves as the registry, extend/reuse it rather than introducing a second competing list; introduce `companies` only where normalized identity benefits the real implementation.
+- **GitHub Secrets are for credentials only**, e.g. `DATABASE_URL`, Telegram token and optional search API key. Never store company names/board IDs or a generated YAML blob as a secret. Scheduled Actions should not edit or commit `companies.yaml` or use `GITHUB_TOKEN` write permissions just to persist discoveries. Optional read-only YAML export or a human-reviewed pull request may be added later only on explicit request.
+- Document database startup/migration, optional seed import, backup/export, source inspection and manual deactivation. Prefer transaction-safe processing, a concurrency group for overlapping GitHub Actions runs, and clear recovery from failed validation/partial runs.
 
 Deduplication priority:
 
@@ -276,7 +320,7 @@ Preserve and reuse the existing matcher; no second matching algorithm inside dis
 ### Eligibility
 
 - Three-state judgment: `eligible`, `ineligible`, `unknown`.
-- Reject only explicit mandatory requirements that clearly conflict with the supplied profile. Seniority alone is not a conflict without relevant profile constraints; graduation windows apply only where explicitly required.
+- Reject only clear mandatory conflicts (e.g., senior role or incompatible required graduation window).
 - Unknown sponsorship, relocation, salary or graduation requirements remain **unknown**, not rejected.
 
 ### Ranking
@@ -300,8 +344,14 @@ Target user-facing commands (retain existing syntax when already implemented):
 # NEW: fetch vacancies from global discovery providers, no employers file required
 job-scout discover-jobs
 
+# FUTURE: find relevant employers and register their verified ATS boards
+job-scout discover-companies
+
 # EXISTING: optional import/validation of supplied ATS URLs
 job-scout discover-sources --input employers.txt
+
+# FUTURE: inspect enabled/verified DB-backed monitoring sources
+job-scout companies list
 
 # FUTURE OR EXISTING: monitor all registered ATS boards
 job-scout monitor
@@ -313,16 +363,17 @@ job-scout run
 job-scout run --dry-run
 ```
 
-If the current CLI already has a differing naming style, preserve compatibility and introduce aliases where useful. In CLI help and README, explain that `discover-sources` imports supplied URLs while `discover-jobs` finds jobs independently.
+If the current CLI already has a differing naming style, preserve compatibility and introduce aliases where useful. In CLI help and README, explain that `discover-sources` imports supplied URLs, `discover-jobs` finds vacancies independently, and `discover-companies` searches for previously unknown employers. `companies list` is illustrative: conform to established CLI conventions and implement it only when the registry functionality is added.
 
 ### Scheduling
 
 - Initial simple deployment: Python 3.12+, `httpx`, `pydantic`, `pytest`, SQLite locally, PostgreSQL in hosted deployments, GitHub Actions scheduler and Telegram Bot API, subject to existing architecture.
-- `discover-jobs` should run at least daily, within provider quotas. `monitor` can run every 12–24 hours if practical; more expensive broad web-search discovery may run less often or via rotated queries.
+- `discover-jobs` should run at least daily, within provider quotas. `monitor` should read the persistent verified/enabled source registry and can run every 12–24 hours if practical; more expensive broad web-search discovery may run less often or via rotated queries.
+- Once implemented, schedule `discover-companies` approximately weekly (independently of the daily digest); use separate bounded query/site-validation budgets and store its results in PostgreSQL. It must never require `employers.txt`, and a failure must not disrupt daily monitoring.
 - A single daily orchestration run is acceptable initially. Separate schedules can be introduced if justified by source budgets.
-- Use a profile-configured digest time and IANA timezone, with a documented neutral fallback when omitted. GitHub Actions runs are best-effort and may be delayed; provide manual triggering, idempotent catch-up runs and source health reports.
+- Use a configurable Europe/Rome morning digest schedule. GitHub Actions runs are best-effort and may be delayed; provide manual triggering, idempotent catch-up runs and source health reports.
 - Do not require a running personal laptop or a paid VPS. Keep operations within free usage limits by default.
-- External service credentials must be injected using environment variables/secrets, never committed or echoed in logs.
+- External service credentials must be injected using environment variables/secrets, never committed or echoed in logs. Use GitHub Secrets for credentials such as `DATABASE_URL` only—not for dynamically discovered employers. Do not give scheduled workflows repository write access just to update a source registry.
 
 ## 10. Engineering, ethics and source access constraints
 
@@ -341,10 +392,6 @@ Add tests incrementally using recorded/synthetic fixtures and mocked HTTP. CI mu
 
 **New tests required:**
 
-- Profile-independent behavior across fictional professions and career stages, including experienced candidates, career changers and candidates without a degree or current enrollment.
-- Changing profile roles, skills, seniority, regions and weights changes matching without requiring code changes; no candidate's personal preferences leak into defaults.
-- Missing or irrelevant education/graduation fields do not create an implicit student requirement, and senior roles are evaluated against the selected profile rather than universally rejected.
-
 - With empty `sources`/`companies`, a provider result becomes a persisted, matchable job.
 - A global-discovery run **never reads** or demands `employers.txt`.
 - Arbeitnow fixture parsing, empty feed, incomplete payload, pagination, 429 and timeout handling.
@@ -356,6 +403,11 @@ Add tests incrementally using recorded/synthetic fixtures and mocked HTTP. CI mu
 - One failing discovery provider does not stop healthy discovery sources, ATS monitoring, matching or digest generation.
 - Deterministic query generation, run limits, query rotation and budget enforcement (once those features exist).
 - Provider results requiring non-retention (e.g., restricted web-search response) do not reach persistent job storage directly.
+- Idempotent company/ATS registration, company aliases, multiple boards per employer, `(provider, region, board_id)` uniqueness, seed YAML import and explicit disabled-state preservation.
+- Database-discovered boards are still monitored on a subsequent run when `companies.yaml` is absent or empty and the GitHub Actions runner has restarted.
+- Company search -> resolve official careers site -> find candidate ATS link -> verify employer-board identity -> persist source -> monitor later, using permitted/mocked source fixtures. Missing/ambiguous official sites or unsupported portals remain pending/unsupported, not auto-registered.
+- Company-search API failure or quota exhaustion cannot stop scheduled job discovery, monitoring or digest delivery; company discovery never triggers a job notification on its own.
+- Ensure scheduled workflows and dry-runs never commit YAML, rewrite secrets, make unapproved paid API calls or accidentally create repository changes.
 
 **First acceptance test:** using a mocked Arbeitnow response with multiple employers and an empty employer registry, `discover-jobs` completes ingestion, stores unique jobs and allows matching without passing `--input`, `employers.txt` or a hard-coded company ID. A posting without an ATS URL remains a first-class recommendation candidate.
 
@@ -372,6 +424,11 @@ Run the repo's existing formatting/lint/type checks and tests. Do not declare a 
 5. **M4 — Add Himalayas provider.** Implement supported search and/or cursor-based browse API, profile-driven keyword queries, rate limiting, paging and required attribution. Evaluate unique job yield and remote-only bias.
 6. **M5 — Optional broader discovery.** Add Brave Search API as opt-in with source-specific storage restrictions, ATS `site:` queries, safe page validation, budgets and quota management. Alternatively add one other permitted free job/RSS provider if demonstrably higher value and lower complexity.
 7. **M6 — Improve coverage and feedback.** Add additional compliant providers, query rotation, discovery/source health reports, simple relevance feedback and provider-efficiency metrics. Avoid paid LLM/semantic models until a deterministic baseline is evaluated.
+8. **M7 — Database-authoritative employer registry (Option B).** Audit existing storage; migrate/add `companies` and source metadata as needed, import optional `companies.yaml` seeds idempotently, preserve manual sources and disabled status, and make **all monitoring read verified enabled boards from persistent PostgreSQL** in hosted runs (SQLite for local tests). Never update GitHub Secrets or YAML to store new employers.
+9. **M8 — Company-first discovery engine.** Add `discover-companies`, employer-focused search profiles, official careers-page/ATS resolution, employer identity verification and database registration using existing detectors and source repositories. Run fully offline tests with simulated search/careers/ATS responses; register an employer with no currently matching jobs.
+10. **M9 — Scheduled company-discovery expansion.** Add a weekly GitHub Actions/company-discovery cadence, safe budgets, error isolation, source-health/verification reports and documentation. Verify new companies survive ephemeral runners and appear in subsequent daily ATS monitoring. Keep this separate from the daily job digest.
+
+**Future experimental research (not an M0–M9 requirement):** historical web URL indexes such as the Internet Archive Wayback Machine CDX index or Common Crawl may help discover candidate ATS board identifiers in bulk. Treat results as potentially stale and unverified. Investigate only after normal discovery is reliable, verify access terms and resource cost, bound requests/processing, and validate each board through its current public ATS endpoint and employer identity before registration. See Section 14.
 
 ### The first instruction when Codex receives this AGENTS.md
 
@@ -391,4 +448,15 @@ If the developer has not requested a different milestone, **audit the current re
 - Prioritize a functioning **employer-independent** pipeline over decorative interfaces or broad unsupported scraping.
 - When missing a nonessential detail, choose a documented reversible default. Ask only if correctness, security, cost or an external irreversible action depends on the answer.
 - For each implemented milestone, report: files changed, commands to run, tests/results, examples of expected output, limitations and exact next milestone.
-- The README must clearly distinguish **discover jobs** from **register/monitor known employers** and explain setup with *zero preconfigured companies*.
+- The README must clearly distinguish **discover jobs**, **discover companies**, **register/monitor known employers** and explain setup with *zero preconfigured companies*.
+
+## 14. Optional future experiment: historical ATS board discovery
+
+This is the previously discussed **experimental option 7**, *not* part of the normal MVP or a mandatory scheduled task.
+
+- Explore historical public URL indexes (e.g., Internet Archive Wayback Machine CDX or Common Crawl) for candidate ATS board URLs hosted on Greenhouse, Lever, Ashby or SmartRecruiters.
+- Extract and deduplicate possible provider/region/board identifiers from documented hostname/path patterns. **Do not** assume that a historical URL means a company or vacancy is still active, or that its associated employer is relevant.
+- Before registering anything, verify the live public board API, corroborate the employer's identity and use the same safeguards, allowed-host validation, request budgets and idempotent database upsert as ordinary company-first discovery.
+- Consider dataset age, limited coverage, crawling/index access rules, API availability, infrastructure expense and potential large data volumes. This is not a promised free or exhaustive source of employers.
+- Evaluate incremental verified board yield per unit of compute/request cost against the existing search-based and feed-based techniques. Proceed only if measured value justifies the complexity and the user authorizes additional resources where required.
+- Keep historical-index exploration out of the daily notification critical path and disabled by default.

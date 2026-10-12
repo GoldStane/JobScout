@@ -31,3 +31,7 @@ and pagination documentation checked on 2026-10-11. Its sentinel snippets, title
 query echo and tracking parameters must never enter persistent storage or digests.
 Publisher content comes from separate mocked `discovery.json` responses. No real
 Brave account, key, billed API request or search-result payload was used.
+
+`profile.yaml` is synthetic matching input for offline regression tests. Tests use
+this fixture independently of the intentionally commented onboarding template in
+`config/profile.example.yaml`.

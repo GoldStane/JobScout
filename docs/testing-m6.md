@@ -39,8 +39,7 @@ replace your normal shell's configuration:
 
 ```sh
 source .venv/bin/activate
-export DATABASE_URL=sqlite:///data/m6-smoke.db
-job-scout db-init
+job-scout --local-db data/m6-smoke.db db-init
 # If this test database already exists at an older revision, use db-migrate instead.
 cat > config/m6-smoke.yaml <<'YAML'
 providers:
@@ -50,9 +49,9 @@ providers:
   remotive: {enabled: true, limit: 100, refresh_hours: 24}
 registration: {enabled: false}
 YAML
-job-scout discover-jobs --config config/m6-smoke.yaml --profile config/profile.example.yaml
-job-scout discovery-health --days 7
-job-scout jobs
+job-scout --local-db data/m6-smoke.db discover-jobs --config config/m6-smoke.yaml --profile config/profile-tracks.example.yaml
+job-scout --local-db data/m6-smoke.db discovery-health --days 7
+job-scout --local-db data/m6-smoke.db jobs
 ```
 
 Expected: a saved report, one Remotive request, attributed listing links and zero
@@ -68,10 +67,10 @@ or rotate test databases to force repeated fetches; respect provider request lim
 Copy a full `job_key` from `jobs` or a matching result and test feedback:
 
 ```sh
-job-scout feedback irrelevant JOB_KEY
-job-scout match --profile config/profile.example.yaml
-job-scout match --profile config/profile.example.yaml --include-dismissed
-job-scout feedback clear JOB_KEY
+job-scout --local-db data/m6-smoke.db feedback irrelevant JOB_KEY
+job-scout --local-db data/m6-smoke.db match --profile config/profile-tracks.example.yaml
+job-scout --local-db data/m6-smoke.db match --profile config/profile-tracks.example.yaml --include-dismissed
+job-scout --local-db data/m6-smoke.db feedback clear JOB_KEY
 ```
 
 A previously matching dismissed job should disappear from normal matching and

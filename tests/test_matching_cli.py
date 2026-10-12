@@ -1,8 +1,9 @@
 import json
+import os
 
 import pytest
+from db_helpers import local_main
 
-from job_scout import main as cli
 from job_scout.models import CollectionReport, Job, SourceConfig, SourceResult, utc_now
 from job_scout.storage.database import initialize_database, open_database
 from job_scout.storage.repository import Repository
@@ -10,7 +11,7 @@ from job_scout.storage.repository import Repository
 
 def test_match_reads_database_without_network_or_profile_storage(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/jobs.db")
-    engine = open_database()
+    engine = open_database(os.environ["DATABASE_URL"])
     initialize_database(engine)
     now = utc_now()
     source = SourceConfig(source="lever", company="Example", board_id="example", enabled=True)
@@ -35,7 +36,7 @@ def test_match_reads_database_without_network_or_profile_storage(tmp_path, monke
         )
     )
     engine.dispose()
-    assert cli.main(["match", "--profile", "config/profile.example.yaml", "--limit", "1"]) == 0
+    assert local_main(["match", "--profile", "tests/fixtures/profile.yaml", "--limit", "1"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["total_open_jobs"] == 1
     assert report["matches"][0]["job"]["source_job_id"] == "1"
@@ -50,11 +51,11 @@ def test_match_reads_database_without_network_or_profile_storage(tmp_path, monke
         ["--min-score", "101"],
         ["--limit", "0"],
         ["--profile", "/nonexistent/profile.yaml"],
-        ["--profile", "config/profile.example.yaml", "--track", "missing"],
+        ["--profile", "tests/fixtures/profile.yaml", "--track", "missing"],
     ],
 )
 def test_bad_match_arguments_fail_cleanly(arguments, capsys):
     with pytest.raises(SystemExit) as error:
-        cli.main(["match", *arguments])
+        local_main(["match", *arguments])
     assert error.value.code == 2
     assert "Traceback" not in capsys.readouterr().err

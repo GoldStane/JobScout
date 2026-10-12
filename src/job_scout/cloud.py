@@ -14,15 +14,14 @@ from zoneinfo import ZoneInfo
 
 import yaml
 from pydantic import BaseModel, ValidationError
-from sqlalchemy.engine import make_url
 
-from job_scout.config import load_registry
 from job_scout.discovery.settings import DiscoverySettings, load_settings
 from job_scout.main import main as cli_main
 from job_scout.matching.profile import Profile, load_profile
-from job_scout.models import SourceRegistry, utc_now
+from job_scout.models import utc_now
+from job_scout.storage.selection import DatabaseConfigError, cloud_database_url
 
-MODES = {"initialize", "migrate", "preview", "send", "status", "health"}
+MODES = {"initialize", "migrate", "preview", "send", "status", "health", "companies", "database"}
 
 
 class CloudConfigError(Exception):
@@ -77,15 +76,9 @@ def required(name: str) -> str:
 
 def validate_database(value: str) -> None:
     try:
-        url = make_url(value)
-    except Exception:
-        raise CloudConfigError("Invalid DATABASE_URL") from None
-    if url.drivername not in {"postgres", "postgresql", "postgresql+psycopg"}:
-        raise CloudConfigError("Cloud runs require persistent PostgreSQL, not SQLite")
-    if not all([url.host, url.database, url.username, url.password]):
-        raise CloudConfigError("DATABASE_URL must include host, database, username and password")
-    if url.query.get("sslmode") not in {"require", "verify-ca", "verify-full"}:
-        raise CloudConfigError("DATABASE_URL must enable TLS with sslmode=require or stricter")
+        cloud_database_url(value)
+    except DatabaseConfigError as exc:
+        raise CloudConfigError(str(exc)) from None
 
 
 def schedule_due(profile: Profile, now: datetime) -> bool:
@@ -122,7 +115,18 @@ def invoke(arguments: list[str]) -> int:
     # Status/preview bodies are intentionally omitted, including on public repos.
     try:
         raw = output.getvalue().strip()
-        if arguments[0] == "discovery-health":
+        if arguments[0] == "db-info":
+            payload = json.loads(raw)
+            fingerprint = payload.get("target_fingerprint", "")
+            if (
+                payload.get("backend") == "postgresql"
+                and len(fingerprint) == 16
+                and all(c in "0123456789abcdef" for c in fingerprint)
+            ):
+                summary["database"] = {"backend": "postgresql", "target_fingerprint": fingerprint}
+                if type(payload.get("schema_version")) is int:
+                    summary["database"]["schema_version"] = payload["schema_version"]
+        elif arguments[0] == "discovery-health":
             rows = json.loads(raw)
             # Fixed provider names and integer counts only; no job/profile content.
             summary["discovery_counts"] = {
@@ -133,11 +137,18 @@ def invoke(arguments: list[str]) -> int:
                 }
                 | {
                     key: row.get("totals", {}).get(key, 0)
-                    for key in ("requests", "publisher_requests", "inserted")
+                    for key in (
+                        "requests",
+                        "publisher_requests",
+                        "site_requests",
+                        "inserted",
+                        "registered",
+                    )
                     if type(row.get("totals", {}).get(key, 0)) is int
                 }
                 for row in rows
-                if row.get("provider") in {"arbeitnow", "himalayas", "brave", "remotive"}
+                if row.get("provider")
+                in {"arbeitnow", "himalayas", "brave", "remotive", "company_search"}
             }
         elif arguments[0] == "delivery-status":
             rows = json.loads(raw)
@@ -180,9 +191,12 @@ def main() -> int:
         validate_database(required("DATABASE_URL"))
         if mode in {"initialize", "migrate"}:
             return invoke(["db-init" if mode == "initialize" else "db-migrate"])
+        if mode == "database":
+            return invoke(["db-info"])
         if mode == "health":
             return invoke(["discovery-health"])
-        required("TELEGRAM_CHAT_ID")
+        if mode != "companies":
+            required("TELEGRAM_CHAT_ID")
         if mode == "status":
             return invoke(["delivery-status"])
         if mode == "send":
@@ -190,7 +204,6 @@ def main() -> int:
         with TemporaryDirectory(prefix="jobscout-config-") as directory:
             paths = {}
             for name, secret in [
-                ("companies", "JOBSCOUT_COMPANIES_YAML"),
                 ("profile", "JOBSCOUT_PROFILE_YAML"),
                 ("discovery", "JOBSCOUT_DISCOVERY_YAML"),
             ]:
@@ -199,12 +212,10 @@ def main() -> int:
                 value = (
                     required(secret) if name == "profile" else os.environ.get(secret, "").strip()
                 )
-                fallback = "sources: []" if name == "companies" else "{}"
-                path.write_text(value or fallback, encoding="utf-8")
+                path.write_text(value or "{}", encoding="utf-8")
                 paths[name] = path
             loaded = {}
             for name, secret, loader, model in [
-                ("companies", "JOBSCOUT_COMPANIES_YAML", load_registry, SourceRegistry),
                 ("profile", "JOBSCOUT_PROFILE_YAML", load_profile, Profile),
                 ("discovery", "JOBSCOUT_DISCOVERY_YAML", load_settings, DiscoverySettings),
             ]:
@@ -212,11 +223,21 @@ def main() -> int:
                     loaded[name] = loader(paths[name])
                 except Exception as exc:
                     raise CloudConfigError(config_error(secret, exc, model)) from None
+            if mode == "companies":
+                return invoke(
+                    [
+                        "discover-companies",
+                        "--config",
+                        str(paths["discovery"]),
+                        "--profile",
+                        str(paths["profile"]),
+                    ]
+                )
             profile = loaded["profile"]
             if event == "schedule" and not schedule_due(profile, utc_now()):
                 print(json.dumps({"status": "before_send_after"}))
                 return 0
-            args = ["run", "--config", str(paths["companies"]), "--profile", str(paths["profile"])]
+            args = ["run", "--registry-only", "--profile", str(paths["profile"])]
             args.extend(["--discovery-config", str(paths["discovery"])])
             if mode == "preview":
                 args.append("--dry-run")

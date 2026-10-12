@@ -75,7 +75,9 @@ class BoardHTTP:
             raise SourceError("Server requested a long Retry-After; retry collection later")
         return max(0.0, delay)
 
-    async def get_json(self, url: str, params: dict[str, str | int]) -> object:
+    async def get_response(
+        self, url: str, params: dict[str, str | int], *, allowed_statuses: tuple[int, ...] = ()
+    ) -> httpx.Response:
         for attempt in range(self.attempts):
             await self._pace()
             delay = 0.0
@@ -116,14 +118,18 @@ class BoardHTTP:
                     delay = self._retry_after(response)
                     if response.status_code == 429:
                         delay = max(delay, self.minimum_rate_limit_delay)
-                elif not response.is_success:
+                elif not response.is_success and response.status_code not in allowed_statuses:
                     raise SourceError(f"HTTP {response.status_code}; check board ID and region")
                 else:
-                    try:
-                        return response.json()
-                    except ValueError as exc:
-                        raise SourceError("Response is not valid JSON") from exc
+                    return response
             if attempt == self.attempts - 1:
                 raise SourceError(reason)
             await self.sleep(max(delay, 2**attempt + random.uniform(0, 0.5)))
         raise AssertionError("Unreachable")
+
+    async def get_json(self, url: str, params: dict[str, str | int]) -> object:
+        response = await self.get_response(url, params)
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise SourceError("Response is not valid JSON") from exc

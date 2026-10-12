@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from db_helpers import local_main
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -218,7 +219,7 @@ def test_dry_run_does_not_open_database(monkeypatch, capsys):
     monkeypatch.setattr(
         discovery_cli, "open_database", lambda: pytest.fail("No database for preview")
     )
-    assert cli.main(["company", "add", URLS["lever"], "--dry-run"]) == 0
+    assert local_main(["company", "add", URLS["lever"], "--dry-run"]) == 0
     assert json.loads(capsys.readouterr().out)["dry_run"]
 
 
@@ -238,7 +239,7 @@ def test_registered_source_is_collected_without_yaml(registry, monkeypatch, caps
         )
 
     monkeypatch.setattr(cli, "_collect", fake_collect)
-    assert cli.main(["ingest", "--registry-only"]) == 0
+    assert local_main(["ingest", "--registry-only"]) == 0
     assert registry.sources()[0]["last_success"] is not None
 
 
@@ -367,10 +368,10 @@ def test_cli_add_then_revalidate_is_idempotent(registry, monkeypatch, capsys):
         return next(results)
 
     monkeypatch.setattr(discovery_cli, "validate", fake)
-    assert cli.main(["company", "add", URLS["lever"]]) == 1
+    assert local_main(["company", "add", URLS["lever"]]) == 1
     candidate = json.loads(capsys.readouterr().out)
     assert candidate["state"] == "pending_validation"
-    assert cli.main(["company", "revalidate", str(candidate["id"])]) == 0
+    assert local_main(["company", "revalidate", str(candidate["id"])]) == 0
     assert json.loads(capsys.readouterr().out)["state"] == "active"
     assert len(registry.candidates()) == 1
     assert len(registry.active().sources) == 1

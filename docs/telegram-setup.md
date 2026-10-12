@@ -9,12 +9,12 @@ From the repository root:
 
 ```sh
 source .venv/bin/activate
-python -m pip install -e '.[dev]'
+python -m pip install -e '.[dev,postgres]'
 ```
 
-Use the same `DATABASE_URL` as before. If unset, the default is
-`sqlite:///data/jobscout.db`. For that default SQLite file, make a timestamped
-consistent backup before migration:
+Use the same PostgreSQL `DATABASE_URL` locally and in Actions. Missing configuration
+is an error; SQLite requires `--local-db data/jobscout.db`. For the preserved local
+SQLite file, make a timestamped consistent backup before any local migration:
 
 ```sh
 python - <<'PY'
@@ -31,13 +31,14 @@ with sqlite3.connect(source_path) as source, sqlite3.connect(backup_path) as bac
     source.backup(backup)
 print(backup_path)
 PY
-job-scout db-migrate
+job-scout --local-db data/jobscout.db db-migrate
 ```
 
 For a custom SQLite path, adjust the backup path. For PostgreSQL, use your
 database's backup facilities. The additive migration preserves jobs and source
 history and is safe to rerun. A brand-new database uses `job-scout db-init`
-instead. Schema 2 is required for all database commands. This setup does not
+instead. The current schema is 6. For cloud migration, run `job-scout db-migrate` without
+`--local-db`, after backing up the shared PostgreSQL database. This setup does not
 provision cloud resources or require new database credentials.
 
 ## 2. Create your Telegram bot
@@ -56,7 +57,7 @@ an existing private file. Edit it locally, enter your bot token, and keep your
 existing database URL. Leave the chat ID blank initially:
 
 ```dotenv
-DATABASE_URL='sqlite:///data/jobscout.db'
+DATABASE_URL='postgresql://USER:PASSWORD@HOST/DATABASE?sslmode=require'
 TELEGRAM_BOT_TOKEN='PASTE_YOUR_BOT_TOKEN_HERE'
 TELEGRAM_CHAT_ID=''
 ```

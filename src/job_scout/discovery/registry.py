@@ -34,7 +34,9 @@ class Registry:
         self.engine = engine
         self.insert = sqlite_insert if engine.dialect.name == "sqlite" else pg_insert
 
-    def _source(self, session, config, *, origin, status, url=None, company_id=None):
+    def _source(
+        self, session, config, *, origin, status, url=None, company_id=None, official_website=None
+    ):
         session.execute(
             self.insert(SourceRow)
             .values(
@@ -65,7 +67,8 @@ class Registry:
                 session.execute(
                     self.insert(CompanyRow)
                     .values(
-                        identity=identity(config),
+                        identity=official_website or identity(config),
+                        official_website=official_website,
                         display_name=config.company,
                         aliases=[],
                         discovered_at=utc_now(),
@@ -73,7 +76,13 @@ class Registry:
                     .on_conflict_do_nothing(index_elements=["identity"])
                 )
                 company = session.scalar(
-                    select(CompanyRow).where(CompanyRow.identity == identity(config))
+                    select(CompanyRow).where(
+                        CompanyRow.identity == (official_website or identity(config))
+                    )
+                )
+            if official_website and company.display_name.casefold() != config.company.casefold():
+                raise DiscoveryError(
+                    "Conflicting organization identity for this website; review manually"
                 )
             source.company_id = company.id
             source.company = company.display_name
@@ -132,6 +141,7 @@ class Registry:
         company_id=None,
         method: str = "manual_url",
         evidence: dict | None = None,
+        official_website: str | None = None,
     ) -> dict:
         now = utc_now()
         key = hashlib.sha256(candidate.identity.encode()).hexdigest()
@@ -173,13 +183,15 @@ class Registry:
                 },
             ]
             if validation.state == "verified":
+                row.config = candidate.config.model_dump()
                 source = self._source(
                     session,
                     candidate.config,
-                    origin="discovered",
+                    origin="company_search" if method == "company_search" else "discovered",
                     status="active",
                     url=candidate.url,
                     company_id=company_id,
+                    official_website=official_website,
                 )
                 source.validated_at, source.validation_error = now, None
                 row.source_id = source.id

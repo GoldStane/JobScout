@@ -3,15 +3,16 @@
 import asyncio
 import copy
 import json
+import os
 from datetime import timedelta
 from pathlib import Path
 
 import httpx
 import pytest
+from db_helpers import local_main
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from job_scout import main as cli
 from job_scout.discovery import jobs_cli
 from job_scout.discovery.base import DiscoveryBatch
 from job_scout.discovery.detect import detect
@@ -45,7 +46,7 @@ def environment(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/m5.db")
     monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "FAKE_TEST_KEY")
-    engine = open_database()
+    engine = open_database(os.environ["DATABASE_URL"])
     initialize_database(engine)
     config = tmp_path / "discovery.yaml"
     config.write_text(
@@ -109,7 +110,7 @@ def test_empty_registry_cli_ingests_verified_posting_and_registers_board(
     engine, config, profile = environment
     calls = mock(monkeypatch)
     assert (
-        cli.main(
+        local_main(
             [
                 "discover-jobs",
                 "--config",
@@ -147,7 +148,9 @@ def test_dry_run_skips_metered_http_and_every_database_write(environment, monkey
         ),
     )
     for command, option in [("discover-jobs", "--config"), ("run", "--discovery-config")]:
-        assert cli.main([command, option, str(config), "--profile", str(profile), "--dry-run"]) == 0
+        assert (
+            local_main([command, option, str(config), "--profile", str(profile), "--dry-run"]) == 0
+        )
         assert "Metered Brave search skipped" in capsys.readouterr().out
     assert all_database_text(engine) == before
 
@@ -207,7 +210,7 @@ def test_disabled_or_rejected_boards_remain_unfetched(environment, monkeypatch, 
 def test_unverified_results_never_create_candidates_or_rows(environment, monkeypatch):
     engine, config, profile = environment
     mock(monkeypatch, publisher=lambda r: httpx.Response(200, json=[]))
-    assert cli.main(["discover-jobs", "--config", str(config), "--profile", str(profile)]) == 0
+    assert local_main(["discover-jobs", "--config", str(config), "--profile", str(profile)]) == 0
     assert not Registry(engine).candidates() and not Registry(engine).sources()
     assert not Repository(engine).jobs()
     assert "SEARCH_" not in all_database_text(engine)

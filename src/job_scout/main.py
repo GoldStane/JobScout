@@ -21,7 +21,9 @@ from job_scout.deduplicate import reconcile_jobs
 from job_scout.discovery import batch as discovery_batch
 from job_scout.discovery import cli as discovery_cli
 from job_scout.discovery import jobs_cli
+from job_scout.discovery.companies import cli as companies_cli
 from job_scout.discovery.detect import DiscoveryError
+from job_scout.discovery.http import PublicAPITransport
 from job_scout.discovery.registry import Registry
 from job_scout.discovery.settings import load_settings, select_country
 from job_scout.matching.profile import Profile, load_profile
@@ -40,11 +42,14 @@ from job_scout.storage.database import (
 from job_scout.storage.delivery import DeliveryBusy, DeliveryRepository, recipient_key
 from job_scout.storage.insights import Insights
 from job_scout.storage.repository import Repository
+from job_scout.storage.selection import DatabaseConfigError, database_identity, database_selection
 from job_scout.validation import validate_config
 
 
 async def _collect(registry: SourceRegistry) -> CollectionReport:
     async with httpx.AsyncClient(
+        transport=PublicAPITransport(),
+        trust_env=False,
         follow_redirects=False,
         headers={"User-Agent": "JobScout/0.1", "Accept": "application/json"},
     ) as client:
@@ -103,7 +108,9 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
             print(json.dumps({"schema_version": SCHEMA_VERSION, "initialized": True}))
             return 0
         repository = Repository(engine)
-        if args.command == "delivery-status":
+        if args.command == "db-info":
+            print(json.dumps(database_identity(engine.url) | {"schema_version": SCHEMA_VERSION}))
+        elif args.command == "delivery-status":
             chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
             if not chat_id:
                 parser.exit(2, "Set TELEGRAM_CHAT_ID to inspect delivery history.\n")
@@ -134,7 +141,6 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
                 else (SourceRegistry(sources=[]))
             )
             registrations = Registry(engine)
-            registry = registrations.active(seeds)
 
             async def execute():
                 chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip() or None
@@ -152,6 +158,9 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
                         )
                     if not args.dry_run:
                         registrations.seed(seeds)
+                        registry = registrations.active()
+                    else:
+                        registry = registrations.active(seeds)
 
                     async def discover_jobs():
                         result, _ = await jobs_cli.fetch_providers(
@@ -177,6 +186,13 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
                     )
 
             result = asyncio.run(execute())
+            if args.dry_run:
+                print(
+                    "DRY RUN: no Telegram messages sent; no jobs marked as sent; "
+                    "no database changes.\n"
+                    "Previews use live source results or an existing unfinished digest. "
+                    "Results may change if sources or delivery history change."
+                )
             for index, message in enumerate(result.messages, start=1):
                 print(f"--- Preview message {index} ---\n{message}\n")
             print(json.dumps({"status": result.status, "source_failures": result.source_failures}))
@@ -259,7 +275,7 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
         else:
             seeds = (
                 _registry(args.config, parser)
-                if not args.registry_only
+                if not args.registry_only and args.config.exists()
                 else SourceRegistry(sources=[])
             )
             registrations = Registry(engine)
@@ -274,12 +290,28 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # Extract this global option anywhere, including after a nested subcommand.
+    selection = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    selection.add_argument("--local-db", type=Path, metavar="PATH")
+    options, remaining = selection.parse_known_args(argv)
+    with database_selection(options.local_db):
+        return _main(remaining)
+
+
+def _main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="job-scout",
+        allow_abbrev=False,
         description="JobScout: personal job discovery and explainable matching.",
         epilog="Collection, persistence, and matching with daily Telegram digests.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {version('job-scout')}")
+    parser.add_argument(
+        "--local-db",
+        type=Path,
+        metavar="PATH",
+        help="Explicitly use a local SQLite file instead of shared PostgreSQL (DATABASE_URL)",
+    )
     subcommands = parser.add_subparsers(dest="command")
     for name, help_text in [
         ("collect", "Fetch public boards and print JSON without saving"),
@@ -296,11 +328,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     discovery_cli.add_commands(subcommands)
     discovery_batch.add_command(subcommands)
     jobs_cli.add_command(subcommands)
+    companies_cli.add_command(subcommands)
+    subcommands.add_parser(
+        "db-info", help="Check schema and print a credential-free target fingerprint"
+    )
     subcommands.add_parser("db-init", help="Initialize the database selected by DATABASE_URL")
     subcommands.add_parser("db-migrate", help="Migrate an existing database to the current schema")
     subcommands.add_parser("delivery-status", help="Inspect Telegram delivery outcomes")
     subcommands.add_parser("telegram-chats", help="Read private chat IDs from recent bot updates")
-    run = subcommands.add_parser("run", help="Collect, match, and send or preview the daily digest")
+    run = subcommands.add_parser(
+        "run",
+        aliases=["monitor"],
+        help="Discover jobs, monitor boards and deliver a digest; monitor skips discovery",
+    )
     run.add_argument(
         "--registry-only",
         action="store_true",
@@ -367,6 +407,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         for name in ["employment-type", "location", "remote-type"]:
             command.add_argument(f"--unknown-{name}", choices=["include", "exclude"])
     args = parser.parse_args(argv)
+    if args.command == "monitor":
+        args.command = "run"
+        args.no_discovery = True
     if args.command == "validate-config":
         return validate_config(args.profile, args.config)
     if args.command in {"match", "run"} and args.sort:
@@ -389,11 +432,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(report.model_dump_json(indent=2))
         return 1 if report.failed else 0
     try:
+        if args.command == "discover-companies":
+            return companies_cli.execute(args)
         if args.command == "discover-jobs":
             return jobs_cli.execute(args, parser)
         if args.command == "discover-sources":
             return discovery_batch.execute(args)
-        if args.command == "company":
+        if args.command in {"company", "companies"}:
             return discovery_cli.execute(args)
         if args.command == "telegram-chats":
 
@@ -410,7 +455,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps({"private_chat_ids": asyncio.run(discover())}))
             return 0
         return _database_command(args, parser)
-    except DiscoveryError as exc:
+    except (DiscoveryError, DatabaseConfigError) as exc:
         parser.exit(2, f"{exc}\n")
     except (DeliveryError, DeliveryBusy) as exc:
         parser.exit(4, f"{exc}\n")

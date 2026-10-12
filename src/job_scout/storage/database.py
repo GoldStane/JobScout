@@ -1,6 +1,5 @@
 """Database setup and versioned initial schema for SQLite and PostgreSQL."""
 
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,8 +21,9 @@ from sqlalchemy.engine import Connection, Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
+from job_scout.storage.selection import selected_database_url
+
 SCHEMA_VERSION = 6
-DEFAULT_DATABASE_URL = "sqlite:///data/jobscout.db"
 
 
 class SchemaError(Exception):
@@ -218,8 +218,12 @@ class DeliveryLock(Base):
 
 
 def open_database(database_url: str | None = None) -> Engine:
-    """Use DATABASE_URL, defaulting to a local SQLite file; never log credentials."""
-    url = make_url(database_url or os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL))
+    """Use shared PostgreSQL unless SQLite is explicitly selected.
+
+    An explicit URL is retained for internal callers and isolated tests. CLI calls
+    use the scoped --local-db override or the validated cloud DATABASE_URL.
+    """
+    url = make_url(database_url) if database_url is not None else selected_database_url()
     if url.drivername in {"postgres", "postgresql"}:
         url = url.set(drivername="postgresql+psycopg")
     if url.drivername not in {"sqlite", "sqlite+pysqlite", "postgresql+psycopg"}:

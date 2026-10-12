@@ -23,13 +23,14 @@ without changing source IDs or deleting jobs, digest parts, or delivery history.
 Do not run an old checkout against the upgraded database.
 
 For GitHub deployment: publish this version, then run **Daily search → migrate**
-before sending. Retain `JOBSCOUT_COMPANIES_YAML` for the first normal run so your
-existing manually configured sources become registry seeds. Migration alone does
-not assume that every historically fetched source should be re-enabled.
+before sending. Import any existing manual seeds once locally with
+`job-scout ingest --config private/companies.yaml` against the hosted DATABASE_URL.
+The obsolete employer-list Secret is no longer read. Migration alone does not
+assume that every historically fetched source should be re-enabled.
 
-Commands operate on DATABASE_URL, which defaults to local SQLite. To register a
-company for cloud execution, load the same PostgreSQL DATABASE_URL used by GitHub
-into your local environment first. `.env` is not loaded automatically. Do not
+Commands require the shared PostgreSQL DATABASE_URL by default. Load the same
+connection string used by GitHub into your local environment. For an explicitly
+local registry, pass `--local-db data/jobscout.db` on each command. `.env` is not loaded automatically. Do not
 paste the URL/password into committed files or public logs.
 
 ## Add a company board
@@ -182,9 +183,9 @@ job-scout run --registry-only
 
 A dry-run merges unsaved seeds in memory and makes no registry writes. The standalone
 `collect --config ...` command remains a stateless YAML-only debugging command.
-Once all seeds are imported, the cloud `JOBSCOUT_COMPANIES_YAML` secret is optional;
-registered sources continue to be monitored. Keep the private profile and Telegram
-secrets as before. There is no discovery run in the daily workflow and no new cron.
+Hosted runs use only database registrations, plus independent job-first discovery.
+Keep the private profile and Telegram secrets as before. The separate opt-in
+[company-discovery workflow](company-discovery.md) expands the registry weekly.
 
 Already-sent digests still follow the daily gate. Use `run --additional` (or the
 GitHub additional checkbox) when you explicitly want another same-day digest after

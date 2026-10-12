@@ -88,6 +88,20 @@ class Insights:
                 .on_conflict_do_nothing(index_elements=["provider", "attempted_at"])
             )
 
+    def record_companies(self, result, attempted_at):
+        # No search result content, URLs or snippets enter the health log.
+        counters = {key: value for key, value in result.as_dict().items() if type(value) is int}
+        with Session(self.engine) as session, session.begin():
+            session.add(
+                DiscoveryRunRow(
+                    provider="company_search",
+                    attempted_at=attempted_at,
+                    completed_at=utc_now(),
+                    status="partial" if result.error or result.failed else "ok",
+                    counters=counters,
+                )
+            )
+
     def health(self, days=30, *, now=None):
         if not 1 <= days <= 365:
             raise ValueError("Health window must be between 1 and 365 days")
@@ -128,10 +142,18 @@ class Insights:
             }
         for provider, group in groups.items():
             totals = group["totals"]
-            requests = totals.get("requests", 0) + totals.get("publisher_requests", 0)
+            requests = (
+                totals.get("requests", 0)
+                + totals.get("publisher_requests", 0)
+                + totals.get("site_requests", 0)
+            )
             group["new_records_per_100_requests"] = (
                 round(100 * totals.get("inserted", 0) / requests, 2) if requests else None
             )
+            if provider == "company_search":
+                group["verified_boards_per_100_requests"] = (
+                    round(100 * totals.get("registered", 0) / requests, 2) if requests else None
+                )
             group["next_due"] = schedules.get(provider)
         return [groups[key] for key in sorted(groups)]
 

@@ -15,7 +15,7 @@ from job_scout.models import Job, utc_now
 
 @pytest.fixture
 def profile():
-    return load_profile(Path("config/profile.example.yaml"))
+    return load_profile(Path("tests/fixtures/profile.yaml"))
 
 
 def job(title="Graduate C++ Engineer", description="Build C++ and Linux systems", **changes):

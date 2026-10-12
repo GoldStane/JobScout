@@ -431,7 +431,7 @@ was performed as part of implementation.
 ## Next milestone
 
 M6 is implemented below. Next, evaluate actual provider yield and feedback before
-choosing further provider or matching work; the roadmap defines no M7.
+choosing further provider or matching work; company-first discovery is documented in [its guide](company-discovery.md).
 
 
 ## M6: coverage, feedback and health

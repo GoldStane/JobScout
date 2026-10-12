@@ -254,3 +254,29 @@ def test_postgres_m6_migration_cooldown_feedback_and_metrics(postgres):
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert sum(pool.map(claim, range(2))) == 1
     assert insights.health() == []
+
+
+def test_company_registration_concurrent_boards_share_official_identity(postgres):
+    from job_scout.discovery.detect import detect
+    from job_scout.discovery.registry import Registry
+    from job_scout.discovery.validate import Validation
+
+    barrier = Barrier(2)
+
+    def register(board):
+        barrier.wait(timeout=5)
+        return Registry(postgres).record(
+            detect(f"https://jobs.ashbyhq.com/{board}", name="Example Robotics"),
+            Validation("verified", "Synthetic reciprocal ownership evidence", True),
+            method="company_search",
+            official_website="https://example.org",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(register, ["Example", "ExampleEU"]))
+    assert all(result["state"] == "active" for result in results)
+    sources = Registry(postgres).sources()
+    assert len(sources) == 2
+    assert len({source["company_id"] for source in sources}) == 1
+    Registry(postgres).disable(sources[0]["id"])
+    assert len(Registry(postgres).active().sources) == 1

@@ -21,7 +21,7 @@ def environment(monkeypatch):
             "sources:\n- source: lever\n  board_id: example\n"
             "  company: Private employer\n  enabled: true\n"
         ),
-        "JOBSCOUT_PROFILE_YAML": Path("config/profile.example.yaml").read_text(),
+        "JOBSCOUT_PROFILE_YAML": Path("tests/fixtures/profile.yaml").read_text(),
         "JOBSCOUT_MODE": "preview",
         "JOBSCOUT_RETRY_UNCERTAIN": "false",
         "JOBSCOUT_ADDITIONAL": "false",
@@ -38,7 +38,9 @@ def test_cloud_materializes_and_cleans_private_files(environment, monkeypatch):
     def invoke(args):
         assert args[0] == "run"
         assert "--dry-run" in args
-        for option in ["--config", "--profile"]:
+        assert "--registry-only" in args
+        assert "--config" not in args
+        for option in ["--discovery-config", "--profile"]:
             path = Path(args[args.index(option) + 1])
             paths.append(path)
             assert path.is_file()
@@ -179,9 +181,8 @@ def test_cloud_empty_employers_and_optional_discovery_settings(environment, monk
     monkeypatch.setenv("JOBSCOUT_DISCOVERY_YAML", "providers:\n  arbeitnow:\n    max_pages: 1\n")
 
     def invoke(args):
-        companies = Path(args[args.index("--config") + 1])
+        assert "--registry-only" in args and "--config" not in args
         discovery = Path(args[args.index("--discovery-config") + 1])
-        assert yaml.safe_load(companies.read_text()) == {"sources": []}
         assert yaml.safe_load(discovery.read_text())["providers"]["arbeitnow"]["max_pages"] == 1
         assert discovery.stat().st_mode & 0o777 == 0o600
         return 0
@@ -234,11 +235,6 @@ def test_cloud_health_only_emits_allowlisted_counters(monkeypatch, capsys):
 @pytest.mark.parametrize(
     "secret,value,expected",
     [
-        (
-            "JOBSCOUT_COMPANIES_YAML",
-            "sources: [{source: ashby, company: PRIVATE_VALUE, board_id: 'bad/name'}]",
-            "sources.0.board_id",
-        ),
         ("JOBSCOUT_PROFILE_YAML", "skills: 123", "skills"),
         (
             "JOBSCOUT_DISCOVERY_YAML",
@@ -260,3 +256,62 @@ def test_cloud_names_invalid_secret_without_values(
     output = capsys.readouterr().out
     assert secret in output and expected in output
     assert "PRIVATE_VALUE" not in output and "PRIVATE_KEY" not in output
+
+
+def test_legacy_employer_secret_is_not_read(environment, monkeypatch):
+    monkeypatch.setenv("JOBSCOUT_COMPANIES_YAML", "INVALID PRIVATE YAML: [")
+    calls = []
+    monkeypatch.setattr(cloud, "invoke", lambda args: calls.append(args) or 0)
+    assert cloud.main() == 0
+    assert "--registry-only" in calls[0] and "--config" not in calls[0]
+
+
+def test_company_cloud_mode_needs_no_telegram(environment, monkeypatch):
+    monkeypatch.setenv("JOBSCOUT_MODE", "companies")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN")
+    monkeypatch.delenv("TELEGRAM_CHAT_ID")
+    calls = []
+    monkeypatch.setattr(cloud, "invoke", lambda args: calls.append(args) or 0)
+    assert cloud.main() == 0 and calls[0][0] == "discover-companies"
+
+
+def test_weekly_companies_is_opt_in_and_separate():
+    path = Path(".github/workflows/company-discovery.yml")
+    workflow = yaml.safe_load(path.read_text())
+    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["concurrency"]["group"] == "jobscout-production"
+    assert "JOBSCOUT_COMPANY_DISCOVERY_ENABLED" in workflow["jobs"]["companies"]["if"]
+    assert "TELEGRAM" not in path.read_text()
+    assert "JOBSCOUT_COMPANIES_YAML" not in path.read_text()
+
+
+def test_cloud_database_info_needs_no_profile_or_telegram(environment, monkeypatch):
+    monkeypatch.setenv("JOBSCOUT_MODE", "database")
+    for name in ("TELEGRAM_CHAT_ID", "TELEGRAM_BOT_TOKEN", "JOBSCOUT_PROFILE_YAML"):
+        monkeypatch.delenv(name)
+    calls = []
+    monkeypatch.setattr(cloud, "invoke", lambda args: calls.append(args) or 0)
+    assert cloud.main() == 0 and calls == [["db-info"]]
+
+
+def test_cloud_database_summary_exposes_only_safe_identity(monkeypatch, capsys):
+    import json
+
+    def fake_cli(args):
+        print(
+            json.dumps(
+                {
+                    "backend": "postgresql",
+                    "target_fingerprint": "0123456789abcdef",
+                    "schema_version": 6,
+                    "password": "PRIVATE_SENTINEL",
+                }
+            )
+        )
+        return 0
+
+    monkeypatch.setattr(cloud, "cli_main", fake_cli)
+    assert cloud.invoke(["db-info"]) == 0
+    output = capsys.readouterr().out
+    assert "PRIVATE_SENTINEL" not in output
+    assert json.loads(output)["database"]["target_fingerprint"] == "0123456789abcdef"

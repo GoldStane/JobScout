@@ -2,15 +2,16 @@
 
 import asyncio
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Barrier
 
 import httpx
 import pytest
+from db_helpers import local_main
 from sqlalchemy import select
 
-from job_scout import main as cli
 from job_scout.discovery import jobs_cli
 from job_scout.discovery.base import DiscoveryBatch, DiscoveryResult
 from job_scout.discovery.providers.remotive import RemotiveProvider
@@ -68,7 +69,7 @@ PROFILE = Profile.model_validate(
 def env(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/m6.db")
-    engine = open_database()
+    engine = open_database(os.environ["DATABASE_URL"])
     initialize_database(engine)
     config = tmp_path / "discovery.yaml"
     config.write_text(
@@ -164,7 +165,7 @@ def test_empty_registry_cli_cache_metrics_and_feedback(env, monkeypatch, capsys)
     engine, config, profile = env
     calls = mock(monkeypatch)
     args = ["discover-jobs", "--config", str(config), "--profile", str(profile), "--format", "json"]
-    assert cli.main(args) == 0
+    assert local_main(args) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["ingestion"]["inserted"] == report["matching_jobs"] == 2
     assert (
@@ -173,25 +174,25 @@ def test_empty_registry_cli_cache_metrics_and_feedback(env, monkeypatch, capsys)
     repo = Repository(engine)
     before = repo.source_health()
     key = report["matches"][0]["job_key"]
-    assert cli.main(["feedback", "irrelevant", key]) == 0
+    assert local_main(["feedback", "irrelevant", key]) == 0
     capsys.readouterr()
-    assert cli.main(args) == 0
+    assert local_main(args) == 0
     cached = json.loads(capsys.readouterr().out)
     assert cached["providers"][0]["status"] == "cached" and cached["requests"] == 0
     assert cached["matching_jobs"] == 1 and repo.source_health() == before
     assert cached["fetched_jobs"] == 0 and cached["cached_jobs"] == 2
     assert "cached jobs; not refreshed" in cached["digest_preview"][0]
     assert len(calls) == 1 and calls[0].url.params["limit"] == "100"
-    assert cli.main(["discovery-health"]) == 0
+    assert local_main(["discovery-health"]) == 0
     health = json.loads(capsys.readouterr().out)[0]
     assert health["totals"]["requests"] == 1 and health["totals"]["inserted"] == 2
     assert health["totals"]["qualifying_observations"] == 2
     assert health["new_records_per_100_requests"] == 200 and health["next_due"]
-    assert cli.main(["match", "--profile", str(profile)]) == 0
+    assert local_main(["match", "--profile", str(profile)]) == 0
     assert json.loads(capsys.readouterr().out)["matching_jobs_before_limit"] == 1
-    assert cli.main(["match", "--profile", str(profile), "--include-dismissed"]) == 0
+    assert local_main(["match", "--profile", str(profile), "--include-dismissed"]) == 0
     assert json.loads(capsys.readouterr().out)["matching_jobs_before_limit"] == 2
-    assert cli.main(["feedback", "clear", key]) == 0
+    assert local_main(["feedback", "clear", key]) == 0
     capsys.readouterr()
     assert not Insights(engine).feedback()
 
@@ -201,13 +202,13 @@ def test_dry_run_no_requests_or_writes_empty_and_cached(env, monkeypatch, capsys
     calls = mock(monkeypatch)
     args = ["discover-jobs", "--config", str(config), "--profile", str(profile)]
     before = database_text(engine)
-    assert cli.main(args + ["--dry-run"]) == 0
+    assert local_main(args + ["--dry-run"]) == 0
     assert "Remotive refresh skipped" in capsys.readouterr().out
     assert not calls and before == database_text(engine)
-    cli.main(args)
+    local_main(args)
     capsys.readouterr()
     before = database_text(engine)
-    cli.main(args + ["--dry-run"])
+    local_main(args + ["--dry-run"])
     assert "Engineering Intern" in capsys.readouterr().out
     assert len(calls) == 1 and before == database_text(engine)
 

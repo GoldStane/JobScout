@@ -2,14 +2,15 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import httpx
 import pytest
+from db_helpers import local_main
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from job_scout import main as cli
 from job_scout.collection import collect
 from job_scout.discovery import jobs_cli
 from job_scout.discovery.base import DiscoveredJob, DiscoveryResult
@@ -220,7 +221,7 @@ def test_runtime_and_request_budgets(registry):
 
 def test_cli_ingests_before_registration_and_keeps_listing_links(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/cli.db")
-    engine = open_database()
+    engine = open_database(os.environ["DATABASE_URL"])
     initialize_database(engine)
     payload = json.loads(Path("tests/fixtures/arbeitnow.json").read_text())
     payload["data"][0]["description"] += '<a href="https://jobs.ashbyhq.com/example/1">Apply</a>'
@@ -234,8 +235,8 @@ def test_cli_ingests_before_registration_and_keeps_listing_links(tmp_path, monke
     monkeypatch.setattr(jobs_cli, "PublicAPITransport", lambda **kw: httpx.MockTransport(handler))
     try:
         assert (
-            cli.main(
-                ["discover-jobs", "--format", "json", "--profile", "config/profile.example.yaml"]
+            local_main(
+                ["discover-jobs", "--format", "json", "--profile", "tests/fixtures/profile.yaml"]
             )
             == 0
         )

@@ -352,3 +352,26 @@ def test_failed_additional_digest_resumes_and_preserves_uncertain_guard(setup):
     assert run(setup, sender, retry=True).status == "sent"
     assert "C++ Engineer 0" not in "\n".join(sender.messages)
     assert len(setup[1].delivered_keys(recipient_key("123"))) == 2
+
+
+def test_completed_digest_dry_run_reports_preview_not_sent(setup):
+    run(setup, FakeSender())
+    before = setup[1].status(recipient_key("123"))
+    preview = run(setup, None, dry_run=True)
+    assert preview.status == "dry_run"
+    assert "already delivered today" in preview.messages[0]
+    assert setup[1].status(recipient_key("123")) == before
+
+
+def test_changed_live_companies_do_not_mean_preview_marked_jobs_sent(setup):
+    first_data = report()
+    second_data = report()
+    second_data.sources[0].config.company = "Other employer"
+    second_data.sources[0].jobs[0].company = "Other employer"
+    first = run(setup, None, data=first_data, dry_run=True, additional=True)
+    second = run(setup, None, data=second_data, dry_run=True, additional=True)
+    third = run(setup, None, data=first_data, dry_run=True, additional=True)
+    assert first.messages != second.messages
+    assert first.messages == third.messages
+    assert setup[1].delivered_keys(recipient_key("123")) == set()
+    assert setup[1].existing(recipient_key("123"), "2026-10-09") is None

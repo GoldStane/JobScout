@@ -2,15 +2,16 @@
 
 import asyncio
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
 import pytest
+from db_helpers import local_main
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from job_scout import main as cli
 from job_scout.deduplicate import reconcile_jobs
 from job_scout.discovery import jobs_cli
 from job_scout.discovery.base import DiscoveredJob, DiscoveryResult
@@ -32,7 +33,7 @@ from job_scout.storage.delivery import DeliveryRepository, recipient_key
 from job_scout.storage.repository import Repository
 
 NOW = datetime(2026, 10, 11, 8, tzinfo=UTC)
-PROFILE = Path("config/profile.example.yaml").resolve()
+PROFILE = Path("tests/fixtures/profile.yaml").resolve()
 
 
 def feed(day=0, *, error=None, linked=True):
@@ -314,7 +315,7 @@ def test_run_cli_empty_registry_without_company_files(tmp_path, monkeypatch, cap
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/jobs.db")
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-    engine = open_database()
+    engine = open_database(os.environ["DATABASE_URL"])
     initialize_database(engine)
 
     async def fetch(configuration):
@@ -322,7 +323,7 @@ def test_run_cli_empty_registry_without_company_files(tmp_path, monkeypatch, cap
 
     monkeypatch.setattr(jobs_cli, "fetch_discovery", fetch)
     try:
-        assert cli.main(["run", "--dry-run", "--profile", str(PROFILE), "--min-score", "0"]) == 0
+        assert local_main(["run", "--dry-run", "--profile", str(PROFILE), "--min-score", "0"]) == 0
         assert "Engineer — Example" in capsys.readouterr().out
         assert Repository(engine).jobs() == []
     finally:
@@ -331,7 +332,7 @@ def test_run_cli_empty_registry_without_company_files(tmp_path, monkeypatch, cap
 
 def test_readable_discovery_default_and_explicit_json(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/jobs.db")
-    engine = open_database()
+    engine = open_database(os.environ["DATABASE_URL"])
     initialize_database(engine)
     payload = json.loads(Path("tests/fixtures/arbeitnow.json").read_text())
     payload["data"][0]["location"] = "Zürich"
@@ -342,13 +343,13 @@ def test_readable_discovery_default_and_explicit_json(tmp_path, monkeypatch, cap
     )
     args = ["discover-jobs", "--profile", str(PROFILE), "--limit", "1"]
     try:
-        assert cli.main(args) == 0
+        assert local_main(args) == 0
         output = capsys.readouterr().out
         assert "JobScout · Job discovery" in output and "showing 1 of 2" in output
         assert "Zürich" in output and "\\u00" not in output and "\\n" not in output
         assert "Storage: 2 new" in output and "View listing:" in output
         assert "previously undelivered" not in output
-        assert cli.main([*args, "--format", "json"]) == 0
+        assert local_main([*args, "--format", "json"]) == 0
         output = capsys.readouterr().out
         data = json.loads(output)
         assert len(data["matches"]) == 1 and "Zürich" in output

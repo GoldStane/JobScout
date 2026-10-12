@@ -3,16 +3,17 @@
 import asyncio
 import copy
 import json
+import os
 from datetime import timedelta
 from pathlib import Path
 
 import httpx
 import pytest
+from db_helpers import local_main
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from job_scout import main as cli
 from job_scout.discovery import jobs_cli
 from job_scout.discovery.base import DiscoveryResult
 from job_scout.discovery.http import PublicAPITransport
@@ -34,7 +35,7 @@ from job_scout.storage.database import (
 from job_scout.storage.repository import Repository
 
 FIXTURE = Path(__file__).parent / "fixtures/arbeitnow.json"
-PROFILE = Path(__file__).resolve().parents[1] / "config/profile.example.yaml"
+PROFILE = Path(__file__).resolve().parents[1] / "tests/fixtures/profile.yaml"
 
 
 @pytest.fixture
@@ -84,7 +85,7 @@ def test_fixture_normalization_and_listing_identity(payload):
 def test_empty_registry_cli_ingests_matches_and_previews(tmp_path, monkeypatch, capsys, payload):
     monkeypatch.chdir(tmp_path)  # No employers.txt or config/companies.yaml exists here.
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/jobs.db")
-    engine = open_database()
+    engine = open_database(os.environ["DATABASE_URL"])
     initialize_database(engine)
     try:
         with Session(engine) as session:
@@ -96,7 +97,7 @@ def test_empty_registry_cli_ingests_matches_and_previews(tmp_path, monkeypatch, 
             lambda **kw: httpx.MockTransport(lambda request: httpx.Response(200, json=payload)),
         )
         args = ["discover-jobs", "--format", "json", "--profile", str(PROFILE)]
-        assert cli.main(args) == 0
+        assert local_main(args) == 0
         first = json.loads(capsys.readouterr().out)
         assert first["ingestion"]["inserted"] == 2
         assert first["matching_jobs"] == 2
@@ -106,7 +107,7 @@ def test_empty_registry_cli_ingests_matches_and_previews(tmp_path, monkeypatch, 
         repo = Repository(engine)
         original = repo.jobs()
         assert len({job.company for job in original}) == 2
-        assert cli.main(args) == 0
+        assert local_main(args) == 0
         second = json.loads(capsys.readouterr().out)
         assert second["ingestion"]["unchanged"] == 2
         assert second["ingestion"]["inserted"] == 0
@@ -119,7 +120,7 @@ def test_empty_registry_cli_ingests_matches_and_previews(tmp_path, monkeypatch, 
             assert session.scalar(select(func.count()).select_from(NotificationRow)) == 0
             feed = session.scalars(select(SourceRow)).one()
             assert feed.registration_status == "feed" and feed.company_id is None
-        assert cli.main(["match", "--profile", str(PROFILE)]) == 0
+        assert local_main(["match", "--profile", str(PROFILE)]) == 0
         assert json.loads(capsys.readouterr().out)["total_open_jobs"] == 2
     finally:
         engine.dispose()
@@ -127,7 +128,7 @@ def test_empty_registry_cli_ingests_matches_and_previews(tmp_path, monkeypatch, 
 
 def test_dry_run_has_no_writes(tmp_path, monkeypatch, capsys, payload):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/jobs.db")
-    engine = open_database()
+    engine = open_database(os.environ["DATABASE_URL"])
     initialize_database(engine)
     try:
         monkeypatch.setattr(
@@ -136,7 +137,9 @@ def test_dry_run_has_no_writes(tmp_path, monkeypatch, capsys, payload):
             lambda **kw: httpx.MockTransport(lambda request: httpx.Response(200, json=payload)),
         )
         assert (
-            cli.main(["discover-jobs", "--format", "json", "--profile", str(PROFILE), "--dry-run"])
+            local_main(
+                ["discover-jobs", "--format", "json", "--profile", str(PROFILE), "--dry-run"]
+            )
             == 0
         )
         result = json.loads(capsys.readouterr().out)

@@ -1,4 +1,4 @@
-# Cloud deployment (unified daily run, M3–M6)
+# Cloud deployment
 
 GitHub Actions starts a temporary Python runner, discovers feed jobs and monitors employer APIs, updates
 persistent PostgreSQL, and calls Telegram. The runner then stops. Telegram does
@@ -88,12 +88,77 @@ Before using this release against an existing database, back it up and run mode
 missing registrations on the first normal run; later YAML changes do not override
 registered sources. Use the [discovery guide](discovery.md) to add, review, enable,
 or disable sources using the same cloud DATABASE_URL from your local CLI.
-`JOBSCOUT_COMPANIES_YAML` is optional even on an empty registry: daily runs now
-include Arbeitnow discovery. Optional `JOBSCOUT_DISCOVERY_YAML` supplies feed and
+Hosted runs read registered sources from PostgreSQL and include Arbeitnow discovery
+even on an empty registry. `JOBSCOUT_COMPANIES_YAML` is no longer read. Optional `JOBSCOUT_DISCOVERY_YAML` supplies feed and
 registration budgets using `config/discovery.example.yaml`. Defaults require no
 API key. Schema 6 adds telemetry, refresh schedules and feedback alongside existing
 request-budget counters and durable `job_links`; the migration preserves
 jobs, source registrations and delivery history. Upgrade before enabling sends.
+
+## Use the same database locally and in Actions
+
+The default now requires shared PostgreSQL. There is **no SQLite fallback** when
+DATABASE_URL is missing, is a SQLite URL, or the cloud connection fails. No new
+schema migration is needed solely for this selection change.
+
+1. Reuse the PostgreSQL database already configured in GitHub Actions. If none
+   exists, create one dedicated JobScout database with a provider such as Neon,
+   choosing its free plan only if its current limits suit your usage. No account
+   or paid resource is provisioned by JobScout.
+2. Copy the provider's connection URI for the same project/branch/database. Store
+   it as the GitHub Actions `DATABASE_URL` Secret and in your existing private
+   local `.env`. Replace any old `sqlite:///...` value. Do not paste the URI into
+   commits, logs or this chat. Preserve all other values in your existing `.env`.
+3. Use the same `TELEGRAM_CHAT_ID` in both environments so confirmed delivery
+   history applies to both. Keep matching profiles/discovery settings aligned too.
+4. Install and explicitly load your trusted private environment locally:
+
+   ```sh
+   source .venv/bin/activate
+   python -m pip install -e '.[dev,postgres]'
+   set -a
+   source .env
+   set +a
+   ```
+
+5. Initialize a **new empty** database with `job-scout db-init`, or back up and
+   upgrade an existing older JobScout database with `job-scout db-migrate`.
+   Run these once from either environment, with other writers stopped for migration.
+6. Run `job-scout db-info`. In Actions, dispatch **Daily search → database** and
+   compare `target_fingerprint` and `schema_version`. This read-only check connects
+   and validates the schema without printing the host, username, password or URI.
+   The fingerprint identifies the configured host/port/database, not its content;
+   use the exact same endpoint in both environments (pooled and direct endpoints
+   can produce different fingerprints). It does not verify identical profiles or
+   custom PostgreSQL search paths; use the same connection options too.
+7. Preview locally with `job-scout run --no-discovery --additional --dry-run`, then
+   use Actions **preview**. Neither marks jobs as sent. Once satisfied, use the
+   existing manual **send** and opt-in scheduler setup below.
+
+The pre-existing local `data/jobscout.db` stays untouched. Explicit local commands:
+
+```sh
+job-scout --local-db data/jobscout.db jobs
+job-scout --local-db data/jobscout.db db-info
+job-scout --local-db data/jobscout.db run --no-discovery --additional --dry-run
+```
+
+The flag is per invocation; it never changes environment variables or future
+commands. These SQLite runs have independent job/delivery history. No automatic
+SQLite-to-PostgreSQL copy, destructive reset, or two-way synchronization occurs.
+If your existing cloud database already has production history, keep using it.
+If creating a new cloud database, old SQLite sent history is not transferred, so
+previously local-only notifications may appear again. Back up both databases before
+any separately planned historical-data migration; do not overwrite cloud history.
+
+Once shared, normal local runs can send and affect the same production history as
+Actions. `--dry-run` remains read-only. Database recipient leases serialize actual
+Telegram delivery across local/Actions processes; Actions concurrency alone cannot
+coordinate with your laptop. Shared quotas and registry upserts use database locks.
+
+Provider references: [Neon connection pooling](https://neon.com/blog/postgres-support-case-recap)
+and [TLS configuration](https://neon.com/blog/oops-proof-your-vibe-code-with-neon-because-mistakes-happen).
+Copy the dashboard URI unchanged rather than manufacturing hostnames or credentials.
 
 ## 3. Add repository secrets
 
@@ -105,8 +170,6 @@ secret**. Add each name exactly:
 - `TELEGRAM_CHAT_ID`: your numeric destination chat ID, including a minus sign
   if applicable. Start the bot in Telegram first; see the
   [Telegram setup guide](telegram-setup.md) if these are not ready.
-- `JOBSCOUT_COMPANIES_YAML` (optional): employer board seeds; omit for feed-only
-  discovery or database-registered boards.
 - `JOBSCOUT_DISCOVERY_YAML` (optional): feed and registration settings. Omit for
   bounded defaults. For ATS-only runs, disable all providers with
   `providers.arbeitnow.enabled: false`, `providers.himalayas.enabled: false`,
@@ -157,6 +220,7 @@ When the preview is satisfactory, manually run mode **send**. This makes a real
 Telegram delivery and records confirmed message parts in PostgreSQL. Check the
 chat. Rerunning send on the same local date returns `already_sent` after completion.
 Mode **status** shows counts of recorded notification-part statuses without sending.
+Mode **database** performs the credential-free `db-info` check described above.
 Mode **health** shows the last 30 days of discovery request, new-record and failure
 counts. It requires only DATABASE_URL, and makes no provider or Telegram requests.
 
@@ -259,3 +323,25 @@ this design requires no paid service but does not guarantee unlimited free usage
 
 These live deployment checks require your accounts and configuration. Local unit
 checks alone do not verify production database access or real Telegram delivery.
+
+## Company-first discovery and employer-list migration
+
+Before removing a legacy employer-list Secret, import its hand-maintained seed file
+once locally with the same hosted DATABASE_URL:
+
+```sh
+job-scout ingest --config private/companies.yaml
+job-scout companies list
+```
+
+This imports seeds and collects jobs; it does not send Telegram. Confirm registrations
+before deleting the obsolete Secret. Existing DB registrations remain intact. Hosted
+runs always use `--registry-only`; they never create or commit employer YAML.
+
+The independent **Weekly company discovery** workflow runs Mondays at 06:00
+Europe/Rome, best-effort, when `JOBSCOUT_COMPANY_DISCOVERY_ENABLED=true` and
+`companies.enabled: true` is configured in `JOBSCOUT_DISCOVERY_YAML`. It uses the
+same database, private profile and optional Brave API key, and no Telegram credentials.
+Manual workflow dispatch has the same opt-in gate. The shared production concurrency
+group serializes it with daily delivery; failures do not cancel the daily workflow.
+See [company discovery](company-discovery.md) before enabling metered searches.

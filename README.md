@@ -3,7 +3,7 @@
 A configurable job discovery and explainable matching service for opportunities
 worldwide, guided by a private candidate profile.
 
-**Status: M6 — additional coverage, scoped feedback and discovery health implemented.**
+**Status: database-backed company discovery, ATS monitoring and daily digests implemented.**
 Discover, persist and rank jobs without preconfigured companies. Existing ATS
 monitoring and Telegram delivery remain available locally or through GitHub Actions.
 Follow the [cloud deployment guide](docs/deployment.md) to configure your database,
@@ -29,12 +29,15 @@ and profession.
 
 ## Discover jobs with zero preconfigured companies
 
-After the local installation below, initialize a new database and run:
+After the local installation below, copy `config/profile.example.yaml` to your
+private `config/profile.yaml`, uncomment the needed YAML sections and fill in your
+own preferences. The example is an intentionally non-runnable, comments-only
+template. Then initialize a new database and run:
 
 ```sh
 job-scout db-init
-job-scout discover-jobs --profile config/profile.example.yaml
-job-scout match --profile config/profile.example.yaml
+job-scout discover-jobs --profile config/profile.yaml
+job-scout match --profile config/profile.yaml
 ```
 
 Use `db-migrate` instead of `db-init` for an existing older schema. No employer
@@ -69,6 +72,36 @@ Routine HTTP request logs are suppressed.
 Existing databases must be upgraded with `job-scout db-migrate` before this release.
 Schema 6 adds discovery metrics, refresh scheduling and feedback alongside existing
 request budgets and identity links. It preserves jobs, boards and delivery history.
+
+## Discover companies, then monitor their jobs
+
+```sh
+# Preview company search queries without API requests or database writes:
+job-scout discover-companies --config config/discovery.example.yaml --profile config/profile.yaml --dry-run
+# After configuring companies.enabled and BRAVE_SEARCH_API_KEY:
+job-scout discover-companies --config config/discovery.yaml --profile config/profile.yaml
+job-scout companies list
+job-scout monitor --registry-only --profile config/profile.yaml --dry-run
+job-scout monitor --registry-only --profile config/profile.yaml
+```
+
+Company search uses engineering domains or profile roles/skills, verifies official
+organization metadata, reciprocal careers/ATS links and the public ATS endpoint,
+then registers the board in the database even with no current vacancies. It never
+sends Telegram messages. `monitor` fetches registered boards and uses the existing
+matcher and Telegram outbox; it is equivalent to `run --no-discovery`. `run` keeps
+job-first discovery enabled for broader coverage. `companies` aliases the existing
+`company` administration commands; `discover-sources --input` remains a manual importer.
+
+PostgreSQL is authoritative in hosted runs. `companies.yaml` is an optional local
+seed input and is never rewritten by discovery. Missing YAML does not prevent
+monitoring database sources. Repeated seeds preserve explicit disables and existing
+registrations. The obsolete `JOBSCOUT_COMPANIES_YAML` Secret is no longer read;
+import any remaining manual seeds once against the hosted database before upgrading
+scheduled runs. Existing schema 6 needs no new migration.
+
+See [company discovery](docs/company-discovery.md) for opt-in settings, identity
+requirements, retention limits, the weekly workflow and recovery.
 
 ## Coverage, feedback and health (M6)
 
@@ -219,7 +252,7 @@ Requires Python 3.12 or newer. From the repository root:
 ```sh
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[dev]'
+python -m pip install -e '.[dev,postgres]'
 job-scout --help
 job-scout collect --help
 ```
@@ -316,24 +349,46 @@ failure, compare the response shape with the official API documentation. For
 
 ## Persistent storage
 
-Update your installation and initialize a local database:
+Local commands and GitHub Actions use the same shared PostgreSQL database by
+default. Set `DATABASE_URL` to the **same connection string** in your private local
+`.env` and the GitHub Actions Secret. SQLite is never an implicit fallback.
+See [deployment](docs/deployment.md#use-the-same-database-locally-and-in-actions)
+for setup and how to verify both environments target the same database.
 
 ```sh
 source .venv/bin/activate
-python -m pip install -e '.[dev]'
-export DATABASE_URL=sqlite:///data/jobscout.db
+python -m pip install -e '.[dev,postgres]'
+# Load only your own trusted, private .env file (the CLI does not load it):
+set -a
+source .env
+set +a
+# New empty shared database only; existing older databases use db-migrate:
 job-scout db-init
-job-scout ingest --config config/companies.yaml
+job-scout db-info
 job-scout jobs
-job-scout source-health
 ```
 
-The SQLite URL shown is also the default when `DATABASE_URL` is unset. Relative
-paths resolve from your current directory; parent directories are created as
-needed. `db-init` creates the initial schema, is safe to rerun, and never clears
-existing data. Use a dedicated JobScout database. Database failures return exit
-code `3` with credential-safe error messages. An uninitialized database asks you
-to run `db-init` before ingestion, without first fetching boards.
+A missing/invalid PostgreSQL URL or failed connection stops the command; it never
+creates or switches to a local database. Cloud URLs require TLS and complete
+connection credentials. Database configuration errors return exit code `2`;
+connection/schema failures return `3`, with credentials suppressed.
+
+Your existing SQLite file is preserved. Select it explicitly for each command:
+
+```sh
+job-scout --local-db data/jobscout.db jobs
+job-scout --local-db data/jobscout.db monitor --dry-run
+# Optional isolated test database, created only by explicit request:
+job-scout --local-db data/test.db db-init
+```
+
+`--local-db PATH` can appear before or after the command, including nested company
+commands. It overrides `DATABASE_URL` for that invocation only. Relative paths
+resolve from the current directory. This does not copy or synchronize data between
+SQLite and PostgreSQL. Normal runs, including local previews, use shared jobs,
+source registrations, feedback, quotas and delivery history. Use the same Telegram
+chat ID to share notification suppression. Profiles remain separate configuration.
+`db-init` never clears existing data; use `db-migrate` for older schemas.
 
 `ingest` prints inserted/updated/unchanged/closed counts, failed source counts,
 and ignored snapshot counts. Source failures still return exit code `1`; jobs
@@ -377,7 +432,7 @@ Persistence rules:
   Revision 4 adds durable feed-to-publisher identity links and verification timestamps.
   `db-init` does not silently alter existing tables.
 
-### PostgreSQL pathway
+### PostgreSQL connection
 
 Install the optional driver, then set `DATABASE_URL` to your existing private
 connection string before running the same commands:
@@ -507,6 +562,14 @@ Dry-run fetches feeds/boards and previews registration, but writes no jobs, heal
 identity links, source registrations, digest plans or delivery success and makes
 no Telegram requests. It requires schema 6 but no bot token. Brave search and Remotive refreshes are skipped
 in dry-run; recent cached Remotive jobs remain available.
+`run --no-discovery --additional --dry-run` also leaves all delivery state unchanged.
+`--additional` bypasses the completed-digest gate for the preview; it does not mark
+previewed jobs as sent. Repeated previews fetch live boards, so changed postings,
+source failures or another process sending a real digest can change their results.
+With the same source data, profile and delivery history, previews select the same jobs.
+The CLI explicitly labels previews and reports `dry_run`, including when today's
+actual digest was already completed.
+
 Set `TELEGRAM_CHAT_ID` for a preview that respects your delivery history;
 without it, all matches are treated as undelivered. A saved unfinished digest
 is previewed/resumed before any new collection.
@@ -596,6 +659,6 @@ No live employer or Telegram calls are required.
 - `cloud.py`: private cloud configuration and sanitized execution summaries.
 - `.github/workflows/`: offline CI with PostgreSQL, and scheduled/manual delivery.
 
-**Next: evaluate measured coverage and feedback before expanding providers or matching rules.**
-The current roadmap ends at M6; no M7 is defined.
+**Next: measure company-discovery yield and review unresolved identity/unsupported portals.**
+Company discovery and weekly scheduling are opt-in; static-page verification is conservative.
 See `AGENTS.md` and [the discovery guide](docs/job-discovery.md) for scope and limitations.

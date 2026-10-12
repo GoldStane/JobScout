@@ -90,10 +90,32 @@ class RegistrationSettings(BaseModel):
     max_response_bytes: int = Field(default=2_000_000, ge=1024, le=10_000_000)
 
 
+class CompanySettings(BaseModel):
+    """Separate opt-in company searches; Brave account budgets remain shared."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    enabled: bool = False
+    engineering_domains: list[str] = Field(default_factory=list, max_length=30)
+    max_sites: int = Field(default=5, ge=1, le=20)
+    max_careers_pages: int = Field(default=2, ge=1, le=5)
+    max_site_requests: int = Field(default=30, ge=1, le=100)
+    refresh_hours: int = Field(default=168, ge=24, le=720)
+
+    @model_validator(mode="after")
+    def domains_valid(self):
+        self.engineering_domains = list(
+            dict.fromkeys(" ".join(value.split()) for value in self.engineering_domains)
+        )
+        if any(not value or len(value) > 100 for value in self.engineering_domains):
+            raise ValueError("Engineering domains must contain 1..100 characters")
+        return self
+
+
 class DiscoverySettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     providers: Providers = Field(default_factory=Providers)
     registration: RegistrationSettings = Field(default_factory=RegistrationSettings)
+    companies: CompanySettings = Field(default_factory=CompanySettings)
 
 
 def load_settings(path: Path | None) -> DiscoverySettings:

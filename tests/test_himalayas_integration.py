@@ -2,14 +2,15 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import httpx
 import pytest
+from db_helpers import local_main
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from job_scout import main as cli
 from job_scout.discovery import jobs_cli
 from job_scout.discovery.base import DiscoveryBatch, DiscoveryResult
 from job_scout.discovery.registry import Registry
@@ -29,7 +30,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 def environment(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/jobs.db")
-    engine = open_database()
+    engine = open_database(os.environ["DATABASE_URL"])
     initialize_database(engine)
     profile = tmp_path / "profile.yaml"
     profile.write_text(
@@ -64,7 +65,7 @@ def test_himalayas_only_empty_registry_cli_persists_and_previews(environment, mo
     engine, profile, configuration = environment
     mock_feed(monkeypatch)
     args = ["discover-jobs", "--profile", str(profile), "--config", str(configuration)]
-    assert cli.main(args + ["--format", "json"]) == 0
+    assert local_main(args + ["--format", "json"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["provider"] == "himalayas" and report["ingestion"]["inserted"] == 2
     assert report["matching_jobs"] == 2
@@ -73,7 +74,7 @@ def test_himalayas_only_empty_registry_cli_persists_and_previews(environment, mo
     assert len(Repository(engine).jobs()) == 2 and Registry(engine).active().sources == []
     with Session(engine) as session:
         assert session.scalar(select(func.count()).select_from(CompanyRow)) == 0
-    assert cli.main(args) == 0
+    assert local_main(args) == 0
     text = capsys.readouterr().out
     assert "0 new" in text and "2 unchanged" in text
     assert "Himalayas — https://himalayas.app/" in text
@@ -87,7 +88,7 @@ def test_cli_dry_run_writes_nothing(environment, monkeypatch, capsys):
     engine, profile, configuration = environment
     mock_feed(monkeypatch)
     assert (
-        cli.main(
+        local_main(
             [
                 "discover-jobs",
                 "--profile",
@@ -112,7 +113,7 @@ def test_daily_cli_himalayas_empty_registry_and_no_discovery(environment, monkey
     engine, profile, configuration = environment
     hosts = mock_feed(monkeypatch)
     assert (
-        cli.main(
+        local_main(
             [
                 "run",
                 "--profile",
@@ -129,7 +130,7 @@ def test_daily_cli_himalayas_empty_registry_and_no_discovery(environment, monkey
     assert hosts == ["himalayas.app"] and Repository(engine).jobs() == []
     hosts.clear()
     with pytest.raises(SystemExit) as exc:
-        cli.main(
+        local_main(
             [
                 "run",
                 "--profile",
@@ -152,7 +153,7 @@ def test_failed_provider_keeps_healthy_provider_cli(environment, monkeypatch, ca
     )
     mock_feed(monkeypatch, arbeitnow_failure=True)
     assert (
-        cli.main(
+        local_main(
             [
                 "discover-jobs",
                 "--profile",

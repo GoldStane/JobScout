@@ -67,3 +67,14 @@ registration:
   max_runtime_seconds: 120.0
   interval_seconds: 1.0
   max_response_bytes: 2000000
+
+# Independent company-first search. Requires an explicitly enabled Brave account/key.
+# Uses providers.brave search/verification limits and the SAME day/month allowance;
+# providers.brave.enabled controls job search only, companies.enabled this command.
+companies:
+  enabled: false
+  engineering_domains: []  # e.g. [robotics, distributed systems]; empty uses profile roles/skills
+  max_sites: 5
+  max_careers_pages: 2  # Same-origin linked pages, in addition to each homepage
+  max_site_requests: 30  # Includes robots, ATS HTML and retries
+  refresh_hours: 168  # Shared database cooldown; failures also consume it

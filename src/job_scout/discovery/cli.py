@@ -14,7 +14,7 @@ from job_scout.storage.database import open_database
 
 def add_commands(subcommands):
     company = subcommands.add_parser(
-        "company", help="Discover and manage persistent source registrations"
+        "company", aliases=["companies"], help="Manage persistent company/source registrations"
     )
     commands = company.add_subparsers(dest="company_command", required=True)
     for name in ["add", "revalidate"]:

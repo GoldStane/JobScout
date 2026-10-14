@@ -18,7 +18,8 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: public.ecr.aws/docker/library/postgres:17
+        # Pull the official image directly; ECR Public can exhaust its anonymous data quota.
+        image: docker.io/library/postgres:17
         env:
           POSTGRES_USER: jobscout_test
           POSTGRES_PASSWORD: local_test_only

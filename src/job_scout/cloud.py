@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 import yaml
 from pydantic import BaseModel, ValidationError
 
+from job_scout.discovery.companies.diagnostics import ACTIONS, STAGES, safe_quota
 from job_scout.discovery.settings import DiscoverySettings, load_settings
 from job_scout.main import main as cli_main
 from job_scout.matching.profile import Profile, load_profile
@@ -126,6 +127,45 @@ def invoke(arguments: list[str]) -> int:
                 summary["database"] = {"backend": "postgresql", "target_fingerprint": fingerprint}
                 if type(payload.get("schema_version")) is int:
                     summary["database"]["schema_version"] = payload["schema_version"]
+        elif arguments[0] == "discover-companies":
+            payload = json.loads(raw)
+            details = {
+                key: payload[key]
+                for key in (
+                    "queries",
+                    "sites",
+                    "requests",
+                    "site_requests",
+                    "publisher_requests",
+                    "registered",
+                    "pending_review",
+                    "unsupported",
+                    "skipped",
+                    "failed",
+                )
+                if type(payload.get(key)) is int
+            }
+            if payload.get("status") in {
+                "completed",
+                "partial",
+                "failed",
+                "no_new_boards",
+                "not_due",
+            }:
+                details["status"] = payload["status"]
+            counts = Counter(
+                (item.get("stage"), item.get("code"))
+                for item in payload.get("diagnostics", [])
+                if isinstance(item, dict)
+                and item.get("stage") in STAGES
+                and item.get("code") in ACTIONS
+            )
+            details["diagnostics"] = [
+                {"stage": stage, "code": code, "count": count, "action": ACTIONS[code]}
+                for (stage, code), count in counts.items()
+            ]
+            details["quota"] = safe_quota(payload.get("quota"))
+            summary["company_discovery"] = details
         elif arguments[0] == "discovery-health":
             rows = json.loads(raw)
             # Fixed provider names and integer counts only; no job/profile content.

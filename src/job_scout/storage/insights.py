@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from job_scout.discovery.companies.diagnostics import ACTIONS, STAGES, safe_quota
 from job_scout.matching.scoring import rank_jobs
 from job_scout.models import utc_now
 from job_scout.notifications.digest import job_key
@@ -25,7 +26,7 @@ class Insights:
         self.engine = engine
         self.insert = sqlite_insert if engine.dialect.name == "sqlite" else postgres_insert
 
-    def claim_refresh(self, provider, hours, *, now=None):
+    def claim_refresh(self, provider, hours, *, now=None, force=False):
         """Atomic reservation before networking; failures/crashes retain their cooldown."""
         now = now or utc_now()
         with Session(self.engine) as session, session.begin():
@@ -44,7 +45,7 @@ class Insights:
                 )
                 .with_for_update()
             ).one()
-            if row.next_due > now:
+            if row.next_due > now and not force:
                 return False
             row.next_due = now + timedelta(hours=hours)
             return True
@@ -91,16 +92,71 @@ class Insights:
     def record_companies(self, result, attempted_at):
         # No search result content, URLs or snippets enter the health log.
         counters = {key: value for key, value in result.as_dict().items() if type(value) is int}
+        if quota := safe_quota(result.quota):
+            counters["quota"] = quota
+        for item in result.diagnostics:
+            if item.get("stage") in STAGES and item.get("code") in ACTIONS:
+                key = f"diagnostic:{item['stage']}:{item['code']}"
+                counters[key] = counters.get(key, 0) + 1
         with Session(self.engine) as session, session.begin():
             session.add(
                 DiscoveryRunRow(
                     provider="company_search",
                     attempted_at=attempted_at,
                     completed_at=utc_now(),
-                    status="partial" if result.error or result.failed else "ok",
+                    status="ok" if result.status == "completed" else result.status,
                     counters=counters,
                 )
             )
+
+    def next_refresh(self, provider):
+        with Session(self.engine) as session:
+            row = session.get(DiscoveryScheduleRow, provider)
+            return row.next_due.isoformat() if row else None
+
+    def last_company_report(self):
+        with Session(self.engine) as session:
+            row = session.scalars(
+                select(DiscoveryRunRow)
+                .where(DiscoveryRunRow.provider == "company_search")
+                .order_by(DiscoveryRunRow.attempted_at.desc())
+                .limit(1)
+            ).first()
+            if row is None:
+                result = {"status": "no_saved_report", "diagnostics": []}
+            else:
+                diagnostics = []
+                for key, count in row.counters.items():
+                    parts = key.split(":")
+                    if (
+                        len(parts) == 3
+                        and parts[0] == "diagnostic"
+                        and parts[1] in STAGES
+                        and parts[2] in ACTIONS
+                    ):
+                        diagnostics.append(
+                            {
+                                "stage": parts[1],
+                                "code": parts[2],
+                                "count": count,
+                                "action": ACTIONS[parts[2]],
+                            }
+                        )
+                result = {
+                    "status": row.status,
+                    "attempted_at": row.attempted_at.isoformat(),
+                    "completed_at": row.completed_at.isoformat(),
+                    "counters": {
+                        k: v
+                        for k, v in row.counters.items()
+                        if not k.startswith("diagnostic:") and k != "quota"
+                    },
+                    "quota": safe_quota(row.counters.get("quota")),
+                    "diagnostics": diagnostics,
+                    "diagnostics_available": bool(diagnostics),
+                }
+        result["next_due"] = self.next_refresh("company_search")
+        return result
 
     def health(self, days=30, *, now=None):
         if not 1 <= days <= 365:
@@ -132,7 +188,7 @@ class Insights:
                 if row.status not in {"cached", "dry_run_skipped"}:
                     group["last_collection_status"] = row.status
                     group["last_collection_attempt"] = row.attempted_at.isoformat()
-                if row.status == "ok":
+                if row.status in {"ok", "no_new_boards"}:
                     group["last_success"] = row.completed_at.isoformat()
                 for key, value in row.counters.items():
                     group["totals"][key] = group["totals"].get(key, 0) + value

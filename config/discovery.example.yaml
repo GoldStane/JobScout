@@ -73,8 +73,11 @@ registration:
 # providers.brave.enabled controls job search only, companies.enabled this command.
 companies:
   enabled: false
-  engineering_domains: []  # e.g. [robotics, distributed systems]; empty uses profile roles/skills
-  max_sites: 5
+  engineering_domains: []  # Empty: profile roles, or skills only when no roles exist
+  # Prefer employer domains, e.g. [trading systems, low latency, embedded systems]
+  # These also serve as relevance terms in independently fetched publisher pages.
+  max_sites: 5  # Shared across queries; 3 queries receive up to 2 / 2 / 1 sites
+  max_redirects: 3  # Same-origin HTTPS page redirects; 0 disables following
   max_careers_pages: 2  # Same-origin linked pages, in addition to each homepage
   max_site_requests: 30  # Includes robots, ATS HTML and retries
   refresh_hours: 168  # Shared database cooldown; failures also consume it

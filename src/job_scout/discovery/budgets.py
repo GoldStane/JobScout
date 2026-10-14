@@ -1,6 +1,6 @@
 """Atomic UTC day/month request reservations, shared by runners using this database."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
@@ -10,6 +10,12 @@ from sqlalchemy.engine import Engine
 from job_scout.models import utc_now
 from job_scout.sources.base import SourceError
 from job_scout.storage.database import DiscoveryBudgetRow, check_schema
+
+
+class BudgetExceeded(SourceError):
+    def __init__(self, scope, used, limit, reset_at):
+        super().__init__(f"Brave {scope} request budget exhausted")
+        self.quota = {"scope": scope, "used": used, "limit": limit, "reset_at": reset_at}
 
 
 class SearchBudget:
@@ -42,7 +48,18 @@ class SearchBudget:
                     .with_for_update()
                 ).scalar_one()
                 if used >= limit:
-                    raise SourceError("Brave daily or monthly request budget exhausted")
+                    scope = "daily" if ":day:" in period else "monthly"
+                    tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(
+                        days=1
+                    )
+                    reset = (
+                        tomorrow
+                        if scope == "daily"
+                        else (now.replace(day=28) + timedelta(days=4)).replace(
+                            day=1, hour=0, minute=0, second=0, microsecond=0
+                        )
+                    )
+                    raise BudgetExceeded(scope, used, limit, reset.isoformat())
                 connection.execute(
                     update(DiscoveryBudgetRow)
                     .where(DiscoveryBudgetRow.period == period)

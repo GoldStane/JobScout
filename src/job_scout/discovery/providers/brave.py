@@ -4,6 +4,7 @@ import asyncio
 import math
 import time
 from collections.abc import Callable
+from datetime import timedelta
 
 import httpx
 from pydantic import ValidationError
@@ -28,6 +29,7 @@ class BraveHTTP(BoardHTTP):
 
     def __init__(self, client, settings: BraveSettings, reserve: Callable[[], None], **kwargs):
         self.blocked = False
+        self.quota = None
         self.reserve = reserve
         super().__init__(
             client,
@@ -69,10 +71,25 @@ class BraveHTTP(BoardHTTP):
                 if count <= 0 and limit != 0:  # A zero limit denotes an unlimited window.
                     if reset > 60:
                         self.blocked = True
+                        reset_at = (
+                            (utc_now() + timedelta(seconds=min(reset, 315360000))).isoformat()
+                            if reset <= 315360000
+                            else None
+                        )
+                        previous = (self.quota or {}).get("reset_at")
+                        self.quota = {
+                            "scope": "provider",
+                            "used": max(0, limit - count),
+                            "limit": limit,
+                            "reset_at": max(previous, reset_at)
+                            if previous and reset_at
+                            else reset_at,
+                        }
                     else:
                         self._next_request = max(self._next_request, time.monotonic() + reset + 0.1)
         except ValueError:
             self.blocked = True  # Never guess away an ambiguous server quota.
+            self.quota = {"scope": "provider", "used": None, "limit": None, "reset_at": None}
 
 
 async def search_page(http: BoardHTTP, query: str, offset: int, settings: BraveSettings):

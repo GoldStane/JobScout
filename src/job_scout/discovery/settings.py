@@ -97,6 +97,7 @@ class CompanySettings(BaseModel):
     enabled: bool = False
     engineering_domains: list[str] = Field(default_factory=list, max_length=30)
     max_sites: int = Field(default=5, ge=1, le=20)
+    max_redirects: int = Field(default=3, ge=0, le=5)
     max_careers_pages: int = Field(default=2, ge=1, le=5)
     max_site_requests: int = Field(default=30, ge=1, le=100)
     refresh_hours: int = Field(default=168, ge=24, le=720)

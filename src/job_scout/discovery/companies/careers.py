@@ -5,6 +5,7 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
+from job_scout.discovery.companies.diagnostics import PageFetchError
 from job_scout.discovery.detect import DiscoveryError, detect
 from job_scout.discovery.http import PublicAPITransport
 from job_scout.sources.base import BoardHTTP, SourceError
@@ -13,7 +14,14 @@ USER_AGENT = "JobScout"
 
 
 def safe_url(value: str) -> str:
-    detect(value)  # Reject credentials, IP literals and internal names.
+    # Validate URL safety independently of ATS board-path syntax (e.g. robots.txt).
+    if len(value) > 2048 or any(ord(c) < 33 for c in value) or "\\" in value:
+        raise DiscoveryError("URL must be at most 2048 characters without whitespace")
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        raise DiscoveryError("Malformed careers URL") from None
+    detect(f"{parsed.scheme}://{parsed.netloc}/safe-board")
     if urlsplit(value).scheme != "https":
         raise DiscoveryError("Company pages require HTTPS")
     # Do not rewrite ATS posting paths here; strip query/fragment on ordinary pages.
@@ -28,7 +36,7 @@ def origin(value: str) -> str:
 class SiteTransport(PublicAPITransport):
     async def handle_async_request(self, request):
         safe_url(str(request.url))
-        # Each observed host is checked and pinned; redirects are never followed.
+        # Check and pin every request, including each redirect destination.
         scoped = PublicAPITransport(
             transport=self.transport, resolver=self.resolver, allowed_hosts={request.url.host}
         )
@@ -44,6 +52,7 @@ class Page(HTMLParser):
         self.text: list[str] = []
         self.links: list[tuple[str, str]] = []
         self.organizations: list[tuple[str, str]] = []
+        self.site_names: set[str] = set()
         self.restricted = False
         self._json: list[str] | None = None
         self._anchor: tuple[str, list[str]] | None = None
@@ -53,6 +62,14 @@ class Page(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs = {key: value or "" for key, value in attrs}
+        if (
+            tag == "meta"
+            and not self._hidden
+            and attrs.get("property", "").lower() == "og:site_name"
+        ):
+            name = attrs.get("content", "").strip()
+            if 0 < len(name) <= 200:
+                self.site_names.add(name)
         if tag == "meta" and attrs.get("name", "").lower() in {"robots", "jobscout"}:
             self.restricted |= any(
                 term in attrs.get("content", "").lower() for term in ("noindex", "nofollow", "none")
@@ -97,7 +114,9 @@ class Page(HTMLParser):
         elif isinstance(value, dict):
             types = value.get("@type", [])
             types = [types] if isinstance(types, str) else types
-            if isinstance(types, list) and "Organization" in types:
+            if isinstance(types, list) and any(
+                kind in types for kind in ("Organization", "Corporation")
+            ):
                 name, url = value.get("name"), value.get("url")
                 if isinstance(name, str) and isinstance(url, str) and 0 < len(name.strip()) <= 200:
                     try:
@@ -109,33 +128,65 @@ class Page(HTMLParser):
 
 
 class CareersHTTP:
-    def __init__(self, http: BoardHTTP):
+    def __init__(self, http: BoardHTTP, max_redirects: int = 3):
         self.http = http
+        self.max_redirects = max_redirects
         self.robots: dict[str, RobotFileParser] = {}
 
     async def page(self, url: str) -> Page:
-        url = safe_url(url)
+        return await self._page(safe_url(url), ())
+
+    async def _page(self, url: str, visited: tuple[str, ...]) -> Page:
         site = origin(url)
         if site not in self.robots:
-            response = await self.http.get_response(
-                site + "/robots.txt", {}, allowed_statuses=(404,)
-            )
+            try:
+                response = await self.http.get_response(
+                    site + "/robots.txt", {}, allowed_statuses=(404,)
+                )
+            except SourceError as exc:
+                raise PageFetchError("robots", exc) from None
             robot = RobotFileParser()
             robot.parse([] if response.status_code == 404 else response.text.splitlines())
             self.robots[site] = robot
         robot = self.robots[site]
         if not robot.can_fetch(USER_AGENT, url):
-            raise SourceError("Publisher robots policy disallows this page")
+            raise PageFetchError(
+                "robots", SourceError("Publisher robots policy disallows this page")
+            )
         delay = robot.crawl_delay(USER_AGENT)
         rate = robot.request_rate(USER_AGENT)
         interval = max(delay or 0, rate.seconds / rate.requests if rate and rate.requests else 0)
         if interval > 60:
-            raise SourceError("Publisher crawl delay exceeds this run's budget")
+            raise PageFetchError(
+                "robots", SourceError("Publisher crawl delay exceeds this run's budget")
+            )
         # Conservative shared pacing; the first page also waits after robots fetch.
         if interval:
             await self.http.sleep(interval)
             self.http.interval = max(self.http.interval, interval)
-        response = await self.http.get_response(url, {})
+        response = await self.http.get_response(url, {}, allowed_statuses=(301, 302, 303, 307, 308))
+        if any(
+            term in response.headers.get("x-robots-tag", "").lower()
+            for term in ("noindex", "nofollow", "none")
+        ):
+            raise SourceError("Publisher page opts out of indexing or link following")
+        if response.status_code in (301, 302, 303, 307, 308):
+            # Only canonicalization within an already observed origin is automatic.
+            # A cross-origin redirect is not proof of employer/ATS affiliation.
+            try:
+                location = response.headers.get("location")
+                if not location:
+                    raise DiscoveryError("Missing redirect destination")
+                target = safe_url(urljoin(url, location))
+                if origin(target) != site:
+                    raise DiscoveryError("Cross-origin redirect requires review")
+            except ValueError:
+                raise SourceError(
+                    f"HTTP {response.status_code}; unsafe or cross-origin redirect"
+                ) from None
+            if target in (*visited, url) or len(visited) >= self.max_redirects:
+                raise SourceError(f"HTTP {response.status_code}; redirect loop or hop limit")
+            return await self._page(target, (*visited, url))
         if response.headers.get("content-type", "").split(";", 1)[0] not in {
             "text/html",
             "application/xhtml+xml",

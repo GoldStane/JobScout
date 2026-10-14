@@ -315,3 +315,32 @@ def test_cloud_database_summary_exposes_only_safe_identity(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "PRIVATE_SENTINEL" not in output
     assert json.loads(output)["database"]["target_fingerprint"] == "0123456789abcdef"
+
+
+def test_company_cloud_logs_report_allowlisted_diagnostics(monkeypatch, capsys):
+    import json
+
+    def fake_cli(args):
+        print(
+            json.dumps(
+                {
+                    "status": "partial",
+                    "failed": 4,
+                    "registered": 0,
+                    "diagnostics": [
+                        {"stage": "robots", "code": "http_redirect", "action": "PRIVATE_SENTINEL"},
+                        {"stage": "PRIVATE_SENTINEL", "code": "bad"},
+                    ],
+                    "outcomes": [{"board": "PRIVATE_SENTINEL"}],
+                }
+            )
+        )
+        return 1
+
+    monkeypatch.setattr(cloud, "cli_main", fake_cli)
+    assert cloud.invoke(["discover-companies"]) == 1
+    output = capsys.readouterr().out
+    assert "PRIVATE_SENTINEL" not in output
+    summary = json.loads(output.splitlines()[0])["company_discovery"]
+    assert summary["failed"] == 4 and summary["status"] == "partial"
+    assert summary["diagnostics"][0]["code"] == "http_redirect"

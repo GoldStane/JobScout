@@ -868,6 +868,7 @@ def test_search_exhaustion_still_verifies_deferred_lead(registry):
 @pytest.mark.parametrize("daily,monthly,scope", [(1, 10, "daily"), (10, 1, "monthly")])
 def test_budget_failure_reports_exact_window_and_reset(registry, daily, monthly, scope):
     from datetime import UTC, datetime
+
     from job_scout.discovery.budgets import BudgetExceeded, SearchBudget
 
     budget = SearchBudget(registry.engine, daily, monthly)

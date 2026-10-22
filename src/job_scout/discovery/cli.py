@@ -1,12 +1,10 @@
-"""Operator commands for the first (single-URL) discovery milestone."""
+"""Inspect and administer persistent employer and ATS registrations."""
 
 import asyncio
 import json
 
-import httpx
-
+from job_scout.discovery import http as public_http
 from job_scout.discovery.detect import DiscoveryError, detect
-from job_scout.discovery.http import PublicAPITransport
 from job_scout.discovery.registry import Registry
 from job_scout.discovery.validate import Validation, validate
 from job_scout.storage.database import open_database
@@ -69,12 +67,7 @@ def execute(args) -> int:
                 registry.record(candidate, Validation("pending_validation", "Validation requested"))
 
             async def verify():
-                async with httpx.AsyncClient(
-                    trust_env=False,
-                    transport=PublicAPITransport(),
-                    follow_redirects=False,
-                    headers={"User-Agent": "JobScout/0.1", "Accept": "application/json"},
-                ) as client:
+                async with public_http.public_api_client() as client:
                     return await validate(
                         candidate, client, max_requests=args.max_requests, max_bytes=args.max_bytes
                     )

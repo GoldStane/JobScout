@@ -16,10 +16,8 @@ from job_scout.discovery.queries import search_queries
 from job_scout.discovery.settings import BraveSettings
 from job_scout.matching.profile import Profile
 from job_scout.models import SourceResult, utc_now
-from job_scout.sources.ashby import AshbySource
+from job_scout.sources import get_source
 from job_scout.sources.base import BoardHTTP, SourceError
-from job_scout.sources.greenhouse import GreenhouseSource
-from job_scout.sources.lever import LeverSource
 
 ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 
@@ -178,11 +176,6 @@ async def discover_publishers(
                 result.limited = True
 
     async def verify():
-        adapters = {
-            "lever": LeverSource(publisher_http),
-            "greenhouse": GreenhouseSource(publisher_http),
-            "ashby": AshbySource(publisher_http),
-        }
         for lead in leads.values():
             candidate = lead["candidate"]
             config = candidate.config
@@ -191,7 +184,7 @@ async def discover_publishers(
                 config = config.model_copy(update={"company": company})
             attempted = utc_now()
             try:
-                jobs = await adapters[config.source].fetch_jobs(config)
+                jobs = await get_source(config.source, publisher_http).fetch_jobs(config)
                 # Validate an entire board before trusting the selected occurrences.
                 if len({job.source_job_id for job in jobs}) != len(jobs):
                     raise SourceError("Duplicate publisher identifiers")

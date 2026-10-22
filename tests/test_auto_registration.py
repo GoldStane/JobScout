@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from job_scout.collection import collect
-from job_scout.discovery import jobs_cli
+from job_scout.discovery import http as public_http
 from job_scout.discovery.base import DiscoveredJob, DiscoveryResult
 from job_scout.discovery.detect import detect
 from job_scout.discovery.registration import ats_links, register_discovered
@@ -232,7 +232,9 @@ def test_cli_ingests_before_registration_and_keeps_listing_links(tmp_path, monke
         assert len(Repository(engine).jobs()) == 2
         return httpx.Response(200, json=FIXTURE["ashby"])
 
-    monkeypatch.setattr(jobs_cli, "PublicAPITransport", lambda **kw: httpx.MockTransport(handler))
+    monkeypatch.setattr(
+        public_http, "PublicAPITransport", lambda **kw: httpx.MockTransport(handler)
+    )
     try:
         assert (
             local_main(

@@ -43,5 +43,8 @@ def validate_config(profile_path: Path, registry_path: Path) -> int:
         else:
             print(f"{label}: valid")
             if label == "registry" and not any(source.enabled for source in value.sources):
-                print("registry: warning: no sources enabled; run cannot collect jobs")
+                print(
+                    "registry: no seed sources enabled; "
+                    "discovery and database sources remain available"
+                )
     return 2 if failed else 0

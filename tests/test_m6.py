@@ -12,6 +12,7 @@ import pytest
 from db_helpers import local_main
 from sqlalchemy import select
 
+from job_scout.discovery import http as public_http
 from job_scout.discovery import jobs_cli
 from job_scout.discovery.base import DiscoveryBatch, DiscoveryResult
 from job_scout.discovery.providers.remotive import RemotiveProvider
@@ -89,7 +90,9 @@ def mock(monkeypatch, handler=None):
         calls.append(request)
         return handler(request) if handler else httpx.Response(200, json=PAYLOAD)
 
-    monkeypatch.setattr(jobs_cli, "PublicAPITransport", lambda **kw: httpx.MockTransport(response))
+    monkeypatch.setattr(
+        public_http, "PublicAPITransport", lambda **kw: httpx.MockTransport(response)
+    )
     return calls
 
 

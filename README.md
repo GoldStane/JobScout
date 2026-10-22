@@ -227,7 +227,8 @@ detects Greenhouse, Lever, and Ashby boards, validates their public endpoints, a
 activates unambiguous sources or stores a review candidate. Use `--dry-run` first.
 Existing databases need `job-scout db-migrate` for schema 6 before other commands.
 
-`run` and `ingest` now use the database registry, seeded once from existing YAML.
+`run` and `ingest` use the database registry, seeded from optional YAML.
+An empty or comment-only seed file is valid and adds no sources.
 Registered disabled sources stay disabled on subsequent seed imports. Use
 `company list`, `company candidates`, `company approve`, `company disable`, and
 `company enable` to manage them. `--registry-only` monitors without a YAML file.
@@ -548,6 +549,10 @@ job-scout run --limit 5
 job-scout delivery-status
 ```
 
+`monitor` (or `run --no-discovery`) skips discovery configuration, provider calls,
+and automatic board registration entirely. It monitors registered boards and uses
+the same matching and digest flow.
+
 `run` collects the enabled discovery feed and registered boards independently,
 stores observations, reconciles verified duplicate identities, and ranks freshly
 observed jobs before sending previously undelivered matches. A feed or ATS failure
@@ -645,7 +650,8 @@ No live employer or Telegram calls are required.
 
 - `models.py`, `config.py`, `normalize.py`: shared records, registry loading,
   and text normalization.
-- `sources/`: adapter protocol, shared HTTP behavior, Greenhouse, and Lever.
+- `sources/`: adapter protocol, shared dispatch, HTTP budgets, Greenhouse, Lever, and Ashby.
+- `discovery/http.py`: shared credential-free public API client and pinned-IP transport.
 - `discovery/`: separate global job providers/orchestration and existing manual
   ATS registration; bounded Arbeitnow fetching uses the shared job repository.
 - `collection.py`: bounded orchestration and independent employer outcomes.

@@ -13,6 +13,7 @@ from db_helpers import local_main
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from job_scout.discovery import http as public_http
 from job_scout.discovery import jobs_cli
 from job_scout.discovery.base import DiscoveryBatch
 from job_scout.discovery.detect import detect
@@ -78,7 +79,9 @@ def mock(monkeypatch, *, search=None, publisher=None):
         }[request.url.host]
         return httpx.Response(200, json=PUBLISHERS[source])
 
-    monkeypatch.setattr(jobs_cli, "PublicAPITransport", lambda **kw: httpx.MockTransport(handler))
+    monkeypatch.setattr(
+        public_http, "PublicAPITransport", lambda **kw: httpx.MockTransport(handler)
+    )
     return calls
 
 
@@ -141,7 +144,7 @@ def test_dry_run_skips_metered_http_and_every_database_write(environment, monkey
     engine, config, profile = environment
     before = all_database_text(engine)
     monkeypatch.setattr(
-        jobs_cli,
+        public_http,
         "PublicAPITransport",
         lambda **kw: httpx.MockTransport(
             lambda r: pytest.fail("No metered search or publisher request in dry-run")

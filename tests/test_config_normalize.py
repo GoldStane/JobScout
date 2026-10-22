@@ -79,3 +79,10 @@ def test_canonical_job_requires_aware_timestamps():
             first_seen_at=datetime(2026, 1, 1),
             last_seen_at=datetime(2026, 1, 1),
         )
+
+
+@pytest.mark.parametrize("content", ["", "# Optional seed file\n", "sources: []\n"])
+def test_empty_registry_is_optional(tmp_path, content):
+    path = tmp_path / "companies.yaml"
+    path.write_text(content)
+    assert load_registry(path).sources == []

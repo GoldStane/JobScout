@@ -20,10 +20,10 @@ from job_scout.config import load_registry
 from job_scout.deduplicate import reconcile_jobs
 from job_scout.discovery import batch as discovery_batch
 from job_scout.discovery import cli as discovery_cli
+from job_scout.discovery import http as public_http
 from job_scout.discovery import jobs_cli
 from job_scout.discovery.companies import cli as companies_cli
 from job_scout.discovery.detect import DiscoveryError
-from job_scout.discovery.http import PublicAPITransport
 from job_scout.discovery.registry import Registry
 from job_scout.discovery.settings import load_settings, select_country
 from job_scout.matching.profile import Profile, load_profile
@@ -47,12 +47,7 @@ from job_scout.validation import validate_config
 
 
 async def _collect(registry: SourceRegistry) -> CollectionReport:
-    async with httpx.AsyncClient(
-        transport=PublicAPITransport(),
-        trust_env=False,
-        follow_redirects=False,
-        headers={"User-Agent": "JobScout/0.1", "Accept": "application/json"},
-    ) as client:
+    async with public_http.public_api_client() as client:
         return await collect(registry, client=client)
 
 
@@ -117,17 +112,14 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
             print(json.dumps(DeliveryRepository(engine).status(recipient_key(chat_id)), indent=2))
         elif args.command == "run":
             assert profile is not None
-            try:
-                discovery_settings = select_country(
-                    load_settings(args.discovery_config), args.country
-                )
-            except (OSError, ValueError, yaml.YAMLError) as exc:
-                parser.exit(2, f"Cannot load discovery configuration ({type(exc).__name__}).\n")
-            if args.no_discovery:
-                discovery_settings.providers.arbeitnow.enabled = False
-                discovery_settings.providers.himalayas.enabled = False
-                discovery_settings.providers.brave.enabled = False
-                discovery_settings.providers.remotive.enabled = False
+            discovery_settings = None
+            if not args.no_discovery:
+                try:
+                    discovery_settings = select_country(
+                        load_settings(args.discovery_config), args.country
+                    )
+                except (OSError, ValueError, yaml.YAMLError) as exc:
+                    parser.exit(2, f"Cannot load discovery configuration ({type(exc).__name__}).\n")
             if args.limit is not None:
                 profile.digest.maximum_matches = args.limit
             if args.min_score is not None:
@@ -173,7 +165,7 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
                         deliveries=DeliveryRepository(engine),
                         profile=profile,
                         collect=lambda: _collect(registry),
-                        discover=discover_jobs,
+                        discover=discover_jobs if discovery_settings is not None else None,
                         register=lambda result: jobs_cli.register_result(
                             result, engine, discovery_settings, dry_run=args.dry_run
                         ),
@@ -272,7 +264,7 @@ def _database_command(args: argparse.Namespace, parser: argparse.ArgumentParser)
                     repository.source_health(), default=lambda date: date.isoformat(), indent=2
                 )
             )
-        else:
+        elif args.command == "ingest":
             seeds = (
                 _registry(args.config, parser)
                 if not args.registry_only and args.config.exists()

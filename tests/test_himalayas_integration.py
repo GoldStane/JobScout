@@ -11,6 +11,7 @@ from db_helpers import local_main
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from job_scout.discovery import http as public_http
 from job_scout.discovery import jobs_cli
 from job_scout.discovery.base import DiscoveryBatch, DiscoveryResult
 from job_scout.discovery.registry import Registry
@@ -57,7 +58,9 @@ def mock_feed(monkeypatch, payload=None, *, arbeitnow_failure=False):
         assert request.url.host == "www.arbeitnow.com"
         return httpx.Response(403 if arbeitnow_failure else 200, json=arbeitnow)
 
-    monkeypatch.setattr(jobs_cli, "PublicAPITransport", lambda **kw: httpx.MockTransport(respond))
+    monkeypatch.setattr(
+        public_http, "PublicAPITransport", lambda **kw: httpx.MockTransport(respond)
+    )
     return hosts
 
 
@@ -181,7 +184,9 @@ def test_search_wrapper_uses_selected_profile_and_one_shared_request_budget(monk
         requests.append(request)
         return httpx.Response(200, json=payload)
 
-    monkeypatch.setattr(jobs_cli, "PublicAPITransport", lambda **kw: httpx.MockTransport(respond))
+    monkeypatch.setattr(
+        public_http, "PublicAPITransport", lambda **kw: httpx.MockTransport(respond)
+    )
     settings = DiscoverySettings.model_validate(
         {
             "providers": {
@@ -378,7 +383,9 @@ def test_registration_budget_shared_across_feeds_and_duplicate_boards(environmen
         assert request.url.host == "api.lever.co"
         return httpx.Response(200, json=payload["lever"])
 
-    monkeypatch.setattr(jobs_cli, "PublicAPITransport", lambda **kw: httpx.MockTransport(respond))
+    monkeypatch.setattr(
+        public_http, "PublicAPITransport", lambda **kw: httpx.MockTransport(respond)
+    )
     settings = DiscoverySettings.model_validate({"registration": {"max_new_boards_per_run": 1}})
     report = asyncio.run(jobs_cli.register_result(batch, engine, settings, dry_run=False))
     assert report.requests == 1 and report.deferred == 1

@@ -8,11 +8,11 @@ from pathlib import Path
 import httpx
 import yaml
 
+from job_scout.discovery import http as public_http
 from job_scout.discovery.budgets import SearchBudget
 from job_scout.discovery.companies.careers import SiteTransport
 from job_scout.discovery.companies.search import CompanyReport, company_queries, discover_companies
 from job_scout.discovery.detect import DiscoveryError
-from job_scout.discovery.http import PublicAPITransport
 from job_scout.discovery.providers.brave import BraveHTTP
 from job_scout.discovery.registry import Registry
 from job_scout.discovery.settings import load_settings
@@ -60,7 +60,7 @@ async def fetch(config, profile, engine, *, retry_now=False):
     budget = SearchBudget(engine, settings.daily_request_limit, settings.monthly_request_limit)
     async with (
         httpx.AsyncClient(
-            transport=PublicAPITransport(allowed_hosts={"api.search.brave.com"}),
+            transport=public_http.PublicAPITransport(allowed_hosts={"api.search.brave.com"}),
             follow_redirects=False,
             trust_env=False,
             headers={"X-Subscription-Token": token, "Accept": "application/json"},
@@ -71,12 +71,7 @@ async def fetch(config, profile, engine, *, retry_now=False):
             trust_env=False,
             headers={"User-Agent": "JobScout/0.1", "Accept": "text/html,text/plain"},
         ) as site_client,
-        httpx.AsyncClient(
-            transport=PublicAPITransport(),
-            follow_redirects=False,
-            trust_env=False,
-            headers={"User-Agent": "JobScout/0.1", "Accept": "application/json"},
-        ) as publisher_client,
+        public_http.public_api_client() as publisher_client,
     ):
         kwargs = dict(
             attempts=settings.attempts,

@@ -1,15 +1,19 @@
 import asyncio
+import json
+from pathlib import Path
 
 import httpx
+import pytest
 
 from job_scout.collection import collect
 from job_scout.models import SourceConfig, SourceRegistry
 
 
-def test_partial_failure_preserves_success():
+@pytest.mark.parametrize("failure", ["http", "canonical_validation"])
+def test_partial_failure_preserves_success(failure, caplog):
     registry = SourceRegistry(
         sources=[
-            SourceConfig(source="greenhouse", company="Bad", board_id="bad", enabled=True),
+            SourceConfig(source="ashby", company="Bad", board_id="bad", enabled=True),
             SourceConfig(source="lever", company="Good", board_id="good", enabled=True),
             SourceConfig(source="lever", company="Disabled", board_id="disabled"),
         ]
@@ -19,8 +23,13 @@ def test_partial_failure_preserves_success():
     async def run():
         def handler(request):
             calls.append(request)
-            if "greenhouse" in request.url.host:
-                return httpx.Response(404)
+            if "ashby" in request.url.host:
+                if failure == "http":
+                    return httpx.Response(404)
+                payload = json.loads(Path("tests/fixtures/ashby.json").read_text())
+                payload["jobs"][0]["publishedAt"] = "2026-01-01T00:00:00"
+                payload["jobs"][0]["title"] = "PRIVATE_PAYLOAD"
+                return httpx.Response(200, json=payload)
             return httpx.Response(
                 200,
                 json=[
@@ -41,6 +50,9 @@ def test_partial_failure_preserves_success():
     assert len(calls) == 2
     assert len(report.sources) == 2
     assert report.sources[0].error is not None
+    if failure == "canonical_validation":
+        assert report.sources[0].error == "Malformed canonical job data"
+    assert "PRIVATE_PAYLOAD" not in caplog.text
     assert report.sources[1].error is None
     assert len(report.sources[1].jobs) == 1
     assert all(s.completed_at >= s.attempted_at for s in report.sources)

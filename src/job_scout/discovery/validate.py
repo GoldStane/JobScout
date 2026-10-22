@@ -7,10 +7,8 @@ import httpx
 from pydantic import ValidationError
 
 from job_scout.discovery.detect import SUPPORTED, Candidate, DiscoveryError, detect
-from job_scout.sources.ashby import AshbySource
+from job_scout.sources import get_source
 from job_scout.sources.base import BoardHTTP, SourceError
-from job_scout.sources.greenhouse import GreenhouseSource
-from job_scout.sources.lever import LeverSource
 
 
 @dataclass(frozen=True)
@@ -38,14 +36,9 @@ async def validate(
     http = http or BoardHTTP(
         client, max_requests=max_requests, max_bytes=max_bytes, interval=interval
     )
-    adapters = {
-        "greenhouse": GreenhouseSource(http),
-        "lever": LeverSource(http),
-        "ashby": AshbySource(http),
-    }
     try:
         async with asyncio.timeout(120):
-            jobs = await adapters[config.source].fetch_jobs(config)
+            jobs = await get_source(config.source, http).fetch_jobs(config)
     except TimeoutError:
         return Validation("pending_validation", "Validation time budget exhausted; retry later")
     except (SourceError, ValidationError) as exc:

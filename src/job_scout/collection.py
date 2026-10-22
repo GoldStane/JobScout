@@ -4,12 +4,11 @@ import asyncio
 import logging
 
 import httpx
+from pydantic import ValidationError
 
 from job_scout.models import CollectionReport, SourceConfig, SourceRegistry, SourceResult, utc_now
-from job_scout.sources.ashby import AshbySource
-from job_scout.sources.base import BoardHTTP, JobSource, SourceError
-from job_scout.sources.greenhouse import GreenhouseSource
-from job_scout.sources.lever import LeverSource
+from job_scout.sources import get_source
+from job_scout.sources.base import BoardHTTP, SourceError
 
 logger = logging.getLogger(__name__)
 
@@ -24,31 +23,25 @@ async def collect(
     if concurrency < 1:
         raise ValueError("concurrency must be positive")
     http = BoardHTTP(client, interval=interval)
-    adapters: dict[str, JobSource] = {
-        "ashby": AshbySource(http),
-        "greenhouse": GreenhouseSource(http),
-        "lever": LeverSource(http),
-    }
     semaphore = asyncio.Semaphore(concurrency)
 
     async def fetch(config: SourceConfig) -> SourceResult:
         async with semaphore:
             attempted = utc_now()
             try:
-                if config.source not in adapters:
-                    raise SourceError(
-                        "Unsupported provider; disable this source until an adapter exists"
-                    )
-                jobs = await adapters[config.source].fetch_jobs(config)
-            except SourceError as exc:
+                jobs = await get_source(config.source, http).fetch_jobs(config)
+            except (SourceError, ValidationError) as exc:
+                reason = (
+                    str(exc) if isinstance(exc, SourceError) else "Malformed canonical job data"
+                )
                 logger.warning(
                     "source_failed source=%s board=%s reason=%s",
                     config.source,
                     config.board_id,
-                    exc,
+                    reason,
                 )
                 return SourceResult(
-                    config=config, attempted_at=attempted, completed_at=utc_now(), error=str(exc)
+                    config=config, attempted_at=attempted, completed_at=utc_now(), error=reason
                 )
             logger.info(
                 "source_collected source=%s board=%s jobs=%d",

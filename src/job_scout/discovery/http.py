@@ -63,3 +63,13 @@ class PublicAPITransport(httpx.AsyncBaseTransport):
 
     async def aclose(self):
         await self.transport.aclose()
+
+
+def public_api_client(*, allowed_hosts: set[str] | None = None) -> httpx.AsyncClient:
+    """Consistent, credential-free client for allowlisted public JSON APIs."""
+    return httpx.AsyncClient(
+        transport=PublicAPITransport(allowed_hosts=allowed_hosts),
+        trust_env=False,
+        follow_redirects=False,
+        headers={"User-Agent": "JobScout/0.1", "Accept": "application/json"},
+    )

@@ -12,6 +12,7 @@ import httpx
 import yaml
 
 from job_scout.deduplicate import reconcile_jobs
+from job_scout.discovery import http as public_http
 from job_scout.discovery.base import (
     DiscoveredJob,
     DiscoveryBatch,
@@ -20,7 +21,6 @@ from job_scout.discovery.base import (
 )
 from job_scout.discovery.budgets import SearchBudget
 from job_scout.discovery.detect import detect
-from job_scout.discovery.http import PublicAPITransport
 from job_scout.discovery.orchestrator import discover
 from job_scout.discovery.output import render_discovery
 from job_scout.discovery.providers.arbeitnow import ArbeitnowProvider
@@ -46,12 +46,7 @@ async def fetch_discovery(configuration):
     settings = configuration.providers.arbeitnow
     if not settings.enabled:
         return None, 0
-    async with httpx.AsyncClient(
-        transport=PublicAPITransport(allowed_hosts={"www.arbeitnow.com"}),
-        follow_redirects=False,
-        trust_env=False,
-        headers={"User-Agent": "JobScout/0.1", "Accept": "application/json"},
-    ) as client:
+    async with public_http.public_api_client(allowed_hosts={"www.arbeitnow.com"}) as client:
         http = BoardHTTP(
             client,
             attempts=settings.attempts,
@@ -68,12 +63,7 @@ async def fetch_himalayas(configuration, profile):
     settings = configuration.providers.himalayas
     if not settings.enabled:
         return None, 0
-    async with httpx.AsyncClient(
-        transport=PublicAPITransport(allowed_hosts={"himalayas.app"}),
-        follow_redirects=False,
-        trust_env=False,
-        headers={"User-Agent": "JobScout/0.1", "Accept": "application/json"},
-    ) as client:
+    async with public_http.public_api_client(allowed_hosts={"himalayas.app"}) as client:
         http = BoardHTTP(
             client,
             attempts=settings.attempts,
@@ -129,17 +119,12 @@ async def fetch_brave(configuration, profile, engine, *, dry_run=False):
     # Separate clients: the search credential can NEVER reach a publisher endpoint.
     async with (
         httpx.AsyncClient(
-            transport=PublicAPITransport(allowed_hosts={"api.search.brave.com"}),
+            transport=public_http.PublicAPITransport(allowed_hosts={"api.search.brave.com"}),
             follow_redirects=False,
             trust_env=False,
             headers={"X-Subscription-Token": token, "Accept": "application/json"},
         ) as search_client,
-        httpx.AsyncClient(
-            transport=PublicAPITransport(),
-            follow_redirects=False,
-            trust_env=False,
-            headers={"User-Agent": "JobScout/0.1", "Accept": "application/json"},
-        ) as publisher_client,
+        public_http.public_api_client() as publisher_client,
     ):
         search_http = BraveHTTP(search_client, settings, budget.reserve)
         publisher_http = BoardHTTP(
@@ -188,12 +173,7 @@ async def fetch_remotive(configuration, engine, *, dry_run=False):
             jobs=jobs,
             status="dry_run_skipped" if dry_run else "cached",
         ), 0
-    async with httpx.AsyncClient(
-        transport=PublicAPITransport(allowed_hosts={"remotive.com"}),
-        follow_redirects=False,
-        trust_env=False,
-        headers={"User-Agent": "JobScout/0.1", "Accept": "application/json"},
-    ) as client:
+    async with public_http.public_api_client(allowed_hosts={"remotive.com"}) as client:
         http = BoardHTTP(
             client,
             attempts=1,
@@ -222,12 +202,7 @@ async def fetch_providers(configuration, profile, *, engine=None, dry_run=False)
 
 
 async def register_result(result, engine, configuration, *, dry_run):
-    async with httpx.AsyncClient(
-        transport=PublicAPITransport(),
-        follow_redirects=False,
-        trust_env=False,
-        headers={"User-Agent": "JobScout/0.1", "Accept": "application/json"},
-    ) as client:
+    async with public_http.public_api_client() as client:
         registry = Registry(engine)
         settings = configuration.registration
         outcomes, deferred, registered = [], 0, 0

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from job_scout.deduplicate import reconcile_jobs
+from job_scout.discovery import http as public_http
 from job_scout.discovery import jobs_cli
 from job_scout.discovery.base import DiscoveredJob, DiscoveryResult
 from job_scout.discovery.posting_links import canonical_posting_url
@@ -337,7 +338,7 @@ def test_readable_discovery_default_and_explicit_json(tmp_path, monkeypatch, cap
     payload = json.loads(Path("tests/fixtures/arbeitnow.json").read_text())
     payload["data"][0]["location"] = "Zürich"
     monkeypatch.setattr(
-        jobs_cli,
+        public_http,
         "PublicAPITransport",
         lambda **kw: httpx.MockTransport(lambda r: httpx.Response(200, json=payload)),
     )

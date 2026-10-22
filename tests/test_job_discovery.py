@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from job_scout.discovery import jobs_cli
+from job_scout.discovery import http as public_http
 from job_scout.discovery.base import DiscoveryResult
 from job_scout.discovery.http import PublicAPITransport
 from job_scout.discovery.orchestrator import discover
@@ -92,7 +92,7 @@ def test_empty_registry_cli_ingests_matches_and_previews(tmp_path, monkeypatch, 
             assert session.scalar(select(func.count()).select_from(SourceRow)) == 0
             assert session.scalar(select(func.count()).select_from(CompanyRow)) == 0
         monkeypatch.setattr(
-            jobs_cli,
+            public_http,
             "PublicAPITransport",
             lambda **kw: httpx.MockTransport(lambda request: httpx.Response(200, json=payload)),
         )
@@ -132,7 +132,7 @@ def test_dry_run_has_no_writes(tmp_path, monkeypatch, capsys, payload):
     initialize_database(engine)
     try:
         monkeypatch.setattr(
-            jobs_cli,
+            public_http,
             "PublicAPITransport",
             lambda **kw: httpx.MockTransport(lambda request: httpx.Response(200, json=payload)),
         )

@@ -6,10 +6,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
-import httpx
-
+from job_scout.discovery import http as public_http
 from job_scout.discovery.detect import SUPPORTED, DiscoveryError, detect
-from job_scout.discovery.http import PublicAPITransport
 from job_scout.discovery.registry import Registry
 from job_scout.discovery.validate import Validation, validate
 from job_scout.sources.base import BoardHTTP
@@ -160,12 +158,7 @@ def execute(args) -> int:
             registry = Registry(engine)
 
         async def run():
-            async with httpx.AsyncClient(
-                transport=PublicAPITransport(),
-                trust_env=False,
-                follow_redirects=False,
-                headers={"User-Agent": "JobScout/0.1", "Accept": "application/json"},
-            ) as client:
+            async with public_http.public_api_client() as client:
                 return await discover(
                     entries,
                     fingerprint,

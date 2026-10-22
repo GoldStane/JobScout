@@ -105,28 +105,25 @@ def test_missing_chat_for_status(environment, capsys):
     assert "TELEGRAM_CHAT_ID" in capsys.readouterr().err
 
 
-def test_monitor_reuses_delivery_without_global_discovery(environment, monkeypatch, capsys):
+@pytest.mark.parametrize("command", [["monitor"], ["run", "--no-discovery"]])
+def test_monitor_reuses_delivery_without_global_discovery(
+    environment, monkeypatch, capsys, tmp_path, command
+):
     engine, registry, calls = environment
     from job_scout.discovery import jobs_cli
 
-    async def fetch(configuration, profile, **kwargs):
-        assert not any(
-            settings.enabled
-            for settings in (
-                configuration.providers.arbeitnow,
-                configuration.providers.himalayas,
-                configuration.providers.remotive,
-                configuration.providers.brave,
-            )
-        )
-        return None, 0
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("Monitoring must not invoke discovery or registration")
 
-    monkeypatch.setattr(jobs_cli, "fetch_providers", fetch)
+    monkeypatch.setattr(jobs_cli, "fetch_providers", forbidden)
+    monkeypatch.setattr(jobs_cli, "register_result", forbidden)
     assert (
         local_main(
             [
-                "monitor",
+                *command,
                 "--dry-run",
+                "--discovery-config",
+                str(tmp_path / "missing-discovery.yaml"),
                 "--config",
                 str(registry),
                 "--profile",

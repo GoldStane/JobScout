@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 from job_scout.models import SourceConfig, valid_board_id
+from job_scout.sources import SOURCE_TYPES
 
 HOSTS = {
     "boards.greenhouse.io": ("greenhouse", "global", "job-boards.greenhouse.io"),
@@ -15,7 +16,7 @@ HOSTS = {
     "jobs.ashbyhq.com": ("ashby", "global", "jobs.ashbyhq.com"),
     "careers.smartrecruiters.com": ("smartrecruiters", "global", "careers.smartrecruiters.com"),
 }
-SUPPORTED = {"greenhouse", "lever", "ashby"}
+SUPPORTED = frozenset(SOURCE_TYPES)
 
 
 class DiscoveryError(ValueError):

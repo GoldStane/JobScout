@@ -1,0 +1,4 @@
+Graduate Systems Engineer
+Required: C++ and telemetry parsing.
+Build reliable telemetry tools for embedded systems.
+Preferred: Python and Linux.

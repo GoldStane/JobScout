@@ -28,8 +28,8 @@ def escape_tex(value):
     return "".join(ESCAPES.get(char, char) for char in " ".join(str(value).split()))
 
 
-def context(master, selected):
-    validate_selection(master, selected)
+def context(master, selected, *, allow_rewrites=False):
+    validate_selection(master, selected, allow_rewrites=allow_rewrites)
     result = {"name": master.name, "contact": " | ".join(master.contact)}
     expected = [master.name, *master.contact]
     for section in ("education", "experience", "projects"):
@@ -73,14 +73,14 @@ def context(master, selected):
     return result, expected
 
 
-def render(master, selected, template: Path, output: Path):
+def render(master, selected, template: Path, output: Path, *, allow_rewrites=False):
     try:
         from jinja2 import StrictUndefined, TemplateError
         from jinja2.sandbox import SandboxedEnvironment
     except ImportError:
         raise CVError("Install the optional CV dependencies: pip install -e '.[cv]'") from None
-    evidence = validate_selection(master, selected)
-    data, expected = context(master, selected)
+    evidence = validate_selection(master, selected, allow_rewrites=allow_rewrites)
+    data, expected = context(master, selected, allow_rewrites=allow_rewrites)
     try:
         with template.open("rb") as stream:
             raw = stream.read(1_000_001)
@@ -112,7 +112,11 @@ def render(master, selected, template: Path, output: Path):
         "max_pages": selected.max_pages,
         "compiler_status": "not_run",
         "application_ready": False,
-        "warnings": ["Manual visual review required; no semantic claim rewriting performed."],
+        "warnings": [
+            "Manual factual and visual review required for AI wording."
+            if allow_rewrites
+            else "Manual visual review required; no semantic claim rewriting performed."
+        ],
     }
     try:
         output.mkdir(parents=True, exist_ok=False, mode=0o700)

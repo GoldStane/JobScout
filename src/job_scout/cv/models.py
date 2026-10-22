@@ -115,7 +115,9 @@ class TailoredCV(StrictModel):
     )
 
 
-def validate_selection(master: MasterCV, selected: TailoredCV) -> list[str]:
+def validate_selection(
+    master: MasterCV, selected: TailoredCV, *, allow_rewrites: bool = False
+) -> list[str]:
     """M1 accepts only verbatim verified facts; rewriting requires later review tooling."""
     facts = master.facts()
     evidence = []
@@ -138,7 +140,7 @@ def validate_selection(master: MasterCV, selected: TailoredCV) -> list[str]:
                     seen.add(ref)
                     if facts[ref].evidence_status != "verified":
                         raise CVError("Uncertain evidence cannot be rendered")
-                    if bullet.text != facts[ref].statement:
+                    if not allow_rewrites and bullet.text != facts[ref].statement:
                         raise CVError(
                             "M1 rejects rewritten claims; use the verified statement verbatim"
                         )

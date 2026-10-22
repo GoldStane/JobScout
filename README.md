@@ -1,9 +1,9 @@
 # JobScout
 
-On-demand CV tooling is available as a deterministic first increment: validate a
-private evidence profile, render a factual selection into a fixed LaTeX template,
-and compile/check a PDF. See [CV Tailor setup and limits](docs/cv-tailor.md).
-AI rewriting and job-specific selection are not implemented yet.
+On-demand `job-scout cv tailor` automatically selects vacancy-relevant evidence,
+renders the fixed LaTeX template, and compiles a checked PDF. Optional local Ollama
+rewrites selected bullets with a factual review report. See
+[CV Tailor setup and limits](docs/cv-tailor.md).
 
 A configurable job discovery and explainable matching service for opportunities
 worldwide, guided by a private candidate profile.

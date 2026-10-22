@@ -100,6 +100,7 @@ def compile_bundle(directory: Path, *, allow_downloads=False, timeout=60):
                 pages=pages,
                 compiler="tectonic",
                 network_allowed=allow_downloads,
+                pdf_sha256=hashlib.sha256((directory / "cv.pdf").read_bytes()).hexdigest(),
             )
     except (CVError, OSError) as exc:
         report["compiler_status"] = "failed"

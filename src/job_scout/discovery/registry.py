@@ -187,7 +187,7 @@ class Registry:
                 source = self._source(
                     session,
                     candidate.config,
-                    origin="company_search" if method == "company_search" else "discovered",
+                    origin=method if method in {"company_search", "manual_seed"} else "discovered",
                     status="active",
                     url=candidate.url,
                     company_id=company_id,

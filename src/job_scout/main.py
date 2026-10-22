@@ -305,6 +305,9 @@ def _main(argv: Sequence[str] | None = None) -> int:
         help="Explicitly use a local SQLite file instead of shared PostgreSQL (DATABASE_URL)",
     )
     subcommands = parser.add_subparsers(dest="command")
+    from job_scout.cv import cli as cv_cli
+
+    cv_cli.add_commands(subcommands)
     for name, help_text in [
         ("collect", "Fetch public boards and print JSON without saving"),
         ("ingest", "Fetch public boards and persist jobs and source health"),
@@ -416,6 +419,8 @@ def _main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
+    if args.command == "cv":
+        return cv_cli.execute(args, parser)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     # HTTP request URLs add noise and can contain credentials (e.g. Telegram tokens).
     logging.getLogger("httpx").setLevel(logging.WARNING)

@@ -225,7 +225,12 @@ __marimo__/
 !.env.example
 config/*.yaml
 !config/*.example.yaml
+latex.template
 private/
+output/cvs/
+config/latex.template
+config/*.tex.j2
+!config/*.example.tex.j2
 data/
 *.sqlite
 *.sqlite3

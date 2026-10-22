@@ -1,0 +1,38 @@
+# Entirely fictional; copy into private/master_cv.yaml before using real evidence.
+schema_version: 1
+name: Example Candidate
+contact: [candidate@example.invalid]
+education:
+  - id: edu_example
+    institution: Example University
+    degree: BEng in Example Engineering
+    graduation: null
+experience:
+  - id: exp_example
+    employer: Example Employer
+    title: Software Engineering Intern
+    dates: {start: '2025-06-01', end: '2025-08-31'}
+    facts:
+      - id: fact_parser
+        statement: Implemented a C++ telemetry parser.
+        provenance: Fictional example project record.
+        evidence_status: verified
+projects:
+  - id: project_example
+    name: Input Validation Demo
+    facts:
+      - id: fact_validation
+        statement: Implemented bounded input validation in Python.
+        provenance: Fictional example repository.
+        evidence_status: verified
+      - id: fact_uncertain
+        statement: Improved throughput in an unmeasured experiment.
+        provenance: Fictional unverified note; excluded from output.
+        evidence_status: uncertain
+skills:
+  - id: skill_cpp
+    name: C++
+    evidence_ids: [fact_parser]
+  - id: skill_python
+    name: Python
+    evidence_ids: [fact_validation]

@@ -37,7 +37,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install
-        run: python -m pip install -e '.[dev,postgres]'
+        run: python -m pip install -e '.[dev,postgres,cv]'
       - name: Lint
         run: python -m ruff check .
       - name: Formatting

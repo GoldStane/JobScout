@@ -280,3 +280,34 @@ def test_company_registration_concurrent_boards_share_official_identity(postgres
     assert len({source["company_id"] for source in sources}) == 1
     Registry(postgres).disable(sources[0]["id"])
     assert len(Registry(postgres).active().sources) == 1
+
+
+def test_postgres_validated_seed_import_is_idempotent(postgres):
+    import asyncio
+    import json
+    from pathlib import Path
+
+    import httpx
+
+    from job_scout.discovery.registry import Registry
+    from job_scout.discovery.seeds import import_seeds
+    from job_scout.models import SourceRegistry
+
+    seeds = SourceRegistry(sources=[snapshot().sources[0].config])
+    payload = json.loads(Path("tests/fixtures/discovery.json").read_text())["lever"]
+
+    async def execute():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+        ) as client:
+            return await import_seeds(seeds, Registry(postgres), client)
+
+    assert asyncio.run(execute())["counts"] == {"active": 1}
+    saved = Registry(postgres).sources()
+    assert saved[0]["validated_at"] is not None
+    assert saved[0]["origin"] == "manual_seed"
+    assert asyncio.run(execute())["requests"] == 0
+    assert Registry(postgres).sources() == saved
+    Registry(postgres).disable(saved[0]["id"])
+    assert asyncio.run(execute())["counts"] == {"preserved": 1}
+    assert Registry(postgres).active().sources == []

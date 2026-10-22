@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 
 from job_scout.discovery import http as public_http
 from job_scout.discovery.detect import DiscoveryError, detect
@@ -15,6 +16,15 @@ def add_commands(subcommands):
         "company", aliases=["companies"], help="Manage persistent company/source registrations"
     )
     commands = company.add_subparsers(dest="company_command", required=True)
+    seed = commands.add_parser(
+        "import-seeds", help="Validate optional YAML seeds without collecting jobs or notifying"
+    )
+    seed.add_argument("--config", type=Path, default=Path("config/companies.yaml"))
+    seed.add_argument("--dry-run", action="store_true", help="Validate without database writes")
+    seed.add_argument("--max-sources", type=int, default=100)
+    seed.add_argument("--max-requests", type=int, default=60)
+    seed.add_argument("--max-bytes", type=int, default=2_000_000)
+    seed.add_argument("--max-runtime-seconds", type=int, default=120)
     for name in ["add", "revalidate"]:
         command = commands.add_parser(name)
         if name == "add":
@@ -47,6 +57,10 @@ def add_commands(subcommands):
 
 
 def execute(args) -> int:
+    if args.company_command == "import-seeds":
+        from job_scout.discovery.seeds import execute as import_seeds
+
+        return import_seeds(args)
     if args.company_command in {"add", "revalidate"}:
         if not 1 <= args.max_requests <= 100 or not 1024 <= args.max_bytes <= 10_000_000:
             raise DiscoveryError("Use max-requests 1..100 and max-bytes 1024..10000000")

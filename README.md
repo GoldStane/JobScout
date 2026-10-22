@@ -1,5 +1,10 @@
 # JobScout
 
+On-demand CV tooling is available as a deterministic first increment: validate a
+private evidence profile, render a factual selection into a fixed LaTeX template,
+and compile/check a PDF. See [CV Tailor setup and limits](docs/cv-tailor.md).
+AI rewriting and job-specific selection are not implemented yet.
+
 A configurable job discovery and explainable matching service for opportunities
 worldwide, guided by a private candidate profile.
 
@@ -226,6 +231,11 @@ Follow the [source discovery guide](docs/discovery.md). `company add <careers-ur
 detects Greenhouse, Lever, and Ashby boards, validates their public endpoints, and
 activates unambiguous sources or stores a review candidate. Use `--dry-run` first.
 Existing databases need `job-scout db-migrate` for schema 6 before other commands.
+
+For a validation-backed seed import without job collection or notifications, use
+`job-scout companies import-seeds --config private/companies.yaml --dry-run`, then
+repeat without `--dry-run`. Existing registrations and explicit disables are
+preserved. See [M7 registry work](docs/registry-m7.md) for limits and remaining work.
 
 `run` and `ingest` use the database registry, seeded from optional YAML.
 An empty or comment-only seed file is valid and adds no sources.

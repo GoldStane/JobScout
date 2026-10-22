@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "education": ["edu_example"],
+  "experience": [{
+    "id": "exp_example",
+    "bullets": [{
+      "text": "Implemented a C++ telemetry parser.",
+      "evidence_ids": ["fact_parser"]
+    }]
+  }],
+  "projects": [{
+    "id": "project_example",
+    "bullets": [{
+      "text": "Implemented bounded input validation in Python.",
+      "evidence_ids": ["fact_validation"]
+    }]
+  }],
+  "skills": ["skill_cpp", "skill_python"],
+  "max_pages": 1
+}
